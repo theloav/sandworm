@@ -26,6 +26,11 @@ from ..reconstruct.timeline import TimelineEntry
 from ..reporting.coverage import CoverageReport
 from ..reporting.summary import build_summary
 
+try:
+    from ._logo import LOGO_DATA_URI
+except Exception:  # pragma: no cover - logo asset optional
+    LOGO_DATA_URI = ""
+
 _TEMPLATE = """<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8">
 <title>SANDWORM report — {{ sample_name }}</title>
@@ -38,6 +43,7 @@ _TEMPLATE = """<!DOCTYPE html>
  /* hero */
  .hero{background:linear-gradient(135deg,#161b22,#0d1117);border-bottom:1px solid var(--line);padding:22px 28px}
  .hero-row{display:flex;align-items:center;gap:18px;flex-wrap:wrap;max-width:1140px;margin:auto}
+ .hero .logo{height:64px;width:auto;filter:drop-shadow(0 2px 8px #0008)}
  .hero h1{margin:0;font-size:21px;color:var(--fg2);letter-spacing:.2px}
  .hero .sub{color:var(--mut);font-size:12.5px;margin-top:5px;word-break:break-all}
  .hero .promise{font-style:italic;color:#7ee787;font-size:12.5px;margin-top:6px}
@@ -97,8 +103,9 @@ _TEMPLATE = """<!DOCTYPE html>
 </style></head>
 <body>
 <div class="hero"><div class="hero-row">
+ <img class="logo" src="{{ logo_uri }}" alt="SANDWORM"/>
  <div>
-  <h1>🪱 SANDWORM — Reverse-Engineering Report</h1>
+  <h1>SANDWORM — Reverse-Engineering Report</h1>
   <div class="sub">{{ sample_name }} · <code>{{ sha256 }}</code> · run <code>{{ run_id }}</code></div>
   <div class="promise">Given a sample, reconstruct what happened, explain why, and emit detections.</div>
  </div>
@@ -641,6 +648,7 @@ def render_html(inp: ReportInputs) -> str:
     assessment, next_step = _build_assessment(summary, inp.phases)
     appendix = _build_appendix(inp.store)
     return tmpl.render(
+        logo_uri=LOGO_DATA_URI,
         run_id=inp.run_id,
         sample_name=escape(inp.sample_name),
         sha256=inp.sha256,

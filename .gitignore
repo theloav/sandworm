@@ -14,3 +14,7 @@ dist/
 # Never commit real samples or generated reports
 /samples/real/
 *.report.html
+
+# Windows ADS artifacts
+*:Zone.Identifier
+*.Zone.Identifier

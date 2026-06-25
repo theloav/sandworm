@@ -1,6 +1,18 @@
-# 🪱 SANDWORM
+<div align="center">
 
-**Given a sample, reconstruct what happened, explain why, and emit detections.**
+<img src="assets/banner.png" alt="SANDWORM — AI-Powered Malware Analysis & Reverse Engineering Platform" width="820"/>
+
+<br/>
+
+![tests](https://img.shields.io/badge/tests-76%20passing-2ea043)
+![lint](https://img.shields.io/badge/ruff%20%2B%20mypy-clean-2ea043)
+![python](https://img.shields.io/badge/python-3.11%2B-3776ab)
+![license](https://img.shields.io/badge/license-MIT-blue)
+![offline](https://img.shields.io/badge/runs-fully%20offline-7ee787)
+
+### Given a sample, reconstruct what happened, explain why, and emit detections.
+
+</div>
 
 SANDWORM is an isolated, multi-format malware reverse-engineering platform. It is
 *not* "another sandbox": every subsystem exists to serve one promise — take a
@@ -11,6 +23,11 @@ detections (YARA + Sigma).
 It handles **PE/DLL, ELF (C/Rust/Go), PHP webshells, scripts
 (PowerShell/JS/shell), and Office macros** through a pluggable analyzer
 architecture — new formats are plugins, not core changes.
+
+Every conclusion is **traceable to evidence**, labeled **observed vs inferred**,
+explained through a **reasoning chain**, and turned into **actionable detections** —
+which makes SANDWORM an explainable malware-reasoning platform rather than a
+collection of parsers.
 
 ```bash
 pip install -e ".[dev]"
