@@ -16,6 +16,9 @@ NODE_STRING = "String"
 NODE_API = "ApiCall"
 NODE_EVIDENCE = "Evidence"
 NODE_TECHNIQUE = "Technique"
+NODE_SAMPLE = "Sample"
+NODE_CAPABILITY = "Capability"
+NODE_DETECTION = "Detection"
 
 
 @dataclass

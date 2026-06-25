@@ -8,7 +8,6 @@ network calls happen at render time — everything is inlined.
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
 from html import escape
 from pathlib import Path
@@ -19,6 +18,7 @@ from ..core.evidence import EvidenceStore
 from ..detect.sigma_gen import SigmaRule
 from ..detect.yara_gen import YaraRule
 from ..reconstruct.attack_map import AttackMapping
+from ..reconstruct.explain import confidence_breakdown
 from ..reconstruct.narrative import (
     Phase,
 )
@@ -72,8 +72,8 @@ _TEMPLATE = """<!DOCTYPE html>
  <h2>Executive summary</h2>
  {% if summary.family_hint != 'unknown' %}
  <div class="banner">Suspected family: <b>{{ summary.family_hint }}</b>
-   (fingerprint confidence {{ '%.0f'|format(summary.family_confidence*100) }}%) —
-   <span class="muted">static fingerprint, not a confirmed family attribution</span></div>
+   (static fingerprint similarity {{ '%.0f'|format(summary.family_confidence*100) }}%) —
+   <span class="muted">based on static markers, not a confirmed/behavioral attribution</span></div>
  {% endif %}
  <div class="summary">
   <div class="card"><div class="k">Analysis mode</div><div class="v">{{ summary.analysis_mode }}</div></div>
@@ -128,16 +128,24 @@ _TEMPLATE = """<!DOCTYPE html>
  <table>
   <tr><th>Technique</th><th>Tactic</th><th>Standing</th><th class="conf">Confidence</th><th>Why</th><th>Evidence</th></tr>
   {% for m in mappings %}
+  {% set bd = breakdowns[m.technique_id] %}
   <tr>
    <td><b>{{ m.technique_id }}</b><br>{{ m.technique_name }}</td>
    <td>{{ m.tactic }}</td>
    <td>{{ badge(m.status) }}</td>
    <td class="conf {{ conf_class(m.confidence) }}">{{ '%.2f'|format(m.confidence) }}</td>
    <td>{{ m.why }}</td>
-   <td class="muted">{% for e in m.evidence_ids[:4] %}{{ e }}<br>{% endfor %}</td>
+   <td class="muted">{% for e in m.evidence_ids[:4] %}<a href="#{{ e }}">{{ e }}</a><br>{% endfor %}</td>
   </tr>
+  <tr><td colspan="6" class="muted" style="background:#0d1117">
+     <b>Confidence provenance</b> —
+     derived from {% for s, p in bd.by_source.items() %}<span class="pill">{{ s }} {{ p }}%</span>{% endfor %}
+     &nbsp;·&nbsp; <b>confidence timeline</b>:
+     {% for lane, val in bd.lane_timeline() %}{{ lane }} <b>{{ val }}</b>{% if not loop.last %} → {% endif %}{% endfor %}
+  </td></tr>
   {% endfor %}
  </table>
+ <p class="muted">The confidence timeline shows the static value now and what the dynamic / memory lanes would still contribute (<i>pending</i> until detonation / memory analysis runs).</p>
 </section>
 
 <section>
@@ -166,6 +174,13 @@ _TEMPLATE = """<!DOCTYPE html>
 <section>
  <h2>Detection coverage</h2>
  <p>Overall: <b>{{ '%.0f'|format(coverage.overall*100) }}%</b> of observed techniques are covered by generated rules.</p>
+ <div class="summary">
+  <div class="card"><div class="k">ATT&amp;CK techniques</div><div class="v">{{ coverage.inventory.techniques }}</div></div>
+  <div class="card"><div class="k">Behavioral rules</div><div class="v">{{ coverage.inventory.behavioral_rules }}</div></div>
+  <div class="card"><div class="k">IOC rules</div><div class="v">{{ coverage.inventory.ioc_rules }}</div></div>
+  <div class="card"><div class="k">YARA rules</div><div class="v">{{ coverage.inventory.yara_rules }}</div></div>
+  <div class="card"><div class="k">Runtime rules</div><div class="v">{{ coverage.inventory.runtime_rules }} <span class="muted">(needs dynamic)</span></div></div>
+ </div>
  <table><tr><th>Tactic</th><th>Observed</th><th>Covered</th><th>Score</th></tr>
  {% for t in coverage.per_tactic %}
  <tr><td>{{ t.tactic }}</td>
@@ -181,9 +196,28 @@ _TEMPLATE = """<!DOCTYPE html>
  {% if yara %}{% for r in yara %}<pre>{{ r.to_yara() }}</pre>{% endfor %}
  <p class="muted">All rules verified against the bundled clean corpus (no false positives).</p>
  {% else %}<p class="muted">No clean-passing YARA rule could be synthesized.</p>{% endif %}
- <h3>Sigma</h3>
- {% if sigma %}{% for r in sigma %}<pre>{{ r.to_yaml() }}</pre>{% endfor %}
+ <h3>Sigma <span class="muted">(behavioral rules survive infrastructure changes; IOC rules match rotating atoms)</span></h3>
+ {% if sigma %}{% for r in sigma %}<div class="muted">{{ badge('inferred') if r.kind=='ioc' else badge('observed') }} {{ r.kind }} rule</div><pre>{{ r.to_yaml() }}</pre>{% endfor %}
  {% else %}<p class="muted">No behavioral Sigma rule generated.</p>{% endif %}
+</section>
+
+<section>
+ <h2>Analyst assessment</h2>
+ <div class="banner">{{ assessment|safe }}</div>
+ <p><b>Recommended next step:</b> {{ next_step }}</p>
+</section>
+
+<section>
+ <h2>Evidence appendix <span class="muted">(every claim above is auditable here)</span></h2>
+ <table><tr><th>ID</th><th>Source</th><th>Standing</th><th class="conf">Conf</th><th>Observation</th><th>Raw refs</th></tr>
+ {% for e in appendix %}
+ <tr id="{{ e.id }}"><td class="muted">{{ e.id }}</td><td class="muted">{{ e.source }}</td>
+     <td>{{ badge(e.status) }}</td>
+     <td class="{{ conf_class(e.confidence) }}">{{ '%.2f'|format(e.confidence) }}</td>
+     <td>{{ e.summary }}</td>
+     <td class="muted">{{ e.refs }}<br><span class="muted">{{ e.ts }}</span></td></tr>
+ {% endfor %}
+ </table>
 </section>
 
 <footer class="muted">Generated by SANDWORM · all analysis performed offline · no sample bytes executed without verified isolation.</footer>
@@ -247,42 +281,72 @@ def _collect_iocs(store: EvidenceStore):
     return out
 
 
-def _graph_svg(graph, max_nodes: int = 40) -> tuple[str, str]:
-    """Render the graph as an inline SVG with a simple circular layout."""
+# Reasoning-graph tiers: read left → right as Sample → evidence-entity →
+# capability → technique → detection. Evidence nodes are hidden (they back the
+# drill-down/citations but would clutter the picture).
+_TIER = {"Sample": 0, "Module": 1, "File": 1, "Host": 1, "Registry": 1, "Macro": 1,
+         "String": 1, "ApiCall": 1, "Process": 1, "Capability": 2, "Technique": 3, "Detection": 4}
+_TIER_LABELS = ["Sample", "Indicators", "Capability", "ATT&CK", "Detection"]
+_COLORS = {
+    "Sample": "#e3b341", "Process": "#f0883e", "File": "#58a6ff", "Registry": "#bc8cff",
+    "Host": "#f85149", "Module": "#3fb950", "Macro": "#d29922", "ApiCall": "#79c0ff",
+    "String": "#8b949e", "Capability": "#ff7b72", "Technique": "#7ee787", "Detection": "#d2a8ff",
+}
+
+
+def _graph_svg(graph, max_per_tier: int = 12) -> tuple[str, str]:
+    """Layered reasoning graph: a left→right chain with typed, labelled edges."""
     if graph is None:
         return "<svg viewBox='0 0 10 10'></svg>", "no graph"
-    nodes = list(graph.nodes.values()) if hasattr(graph, "nodes") else []
+    all_nodes = list(graph.nodes.values()) if hasattr(graph, "nodes") else []
     edges = list(graph.edges) if hasattr(graph, "edges") else []
-    # Drop Evidence nodes from the picture to keep it legible; keep entity nodes.
-    nodes = [n for n in nodes if n.label != "Evidence"][:max_nodes]
-    n = len(nodes)
-    if n == 0:
+    nodes = [n for n in all_nodes if n.label != "Evidence"]
+    if not nodes:
         return "<svg viewBox='0 0 10 10'></svg>", "empty graph"
-    w, h, r = 1000, 560, 230
-    cx, cy = w / 2, h / 2
-    colors = {
-        "Process": "#f0883e", "File": "#58a6ff", "Registry": "#bc8cff",
-        "Host": "#f85149", "Module": "#3fb950", "Macro": "#d29922",
-        "ApiCall": "#79c0ff", "String": "#8b949e", "Technique": "#7ee787",
-    }
-    pos = {}
-    for i, node in enumerate(nodes):
-        ang = 2 * math.pi * i / n
-        pos[node.id] = (cx + r * math.cos(ang), cy + r * math.sin(ang))
+
+    # Bucket nodes by tier, cap each tier for legibility.
+    tiers: dict[int, list] = {i: [] for i in range(5)}
+    for n in nodes:
+        tiers[_TIER.get(n.label, 1)].append(n)
+    for i in tiers:
+        tiers[i] = tiers[i][:max_per_tier]
+    kept = {n.id for col in tiers.values() for n in col}
+
+    w, h = 1100, 600
+    col_x = [90, 330, 560, 790, 1010]
+    pos: dict[str, tuple[float, float]] = {}
+    for tier, col in tiers.items():
+        k = len(col)
+        for i, node in enumerate(col):
+            y = (h - 40) * (i + 1) / (k + 1) + 20
+            pos[node.id] = (col_x[tier], y)
+
     parts = [f"<svg viewBox='0 0 {w} {h}' xmlns='http://www.w3.org/2000/svg'>"]
+    # column headers
+    for tier, label in enumerate(_TIER_LABELS):
+        parts.append(f"<text x='{col_x[tier]:.0f}' y='14' fill='#6e7681' font-size='11' text-anchor='middle'>{escape(label)}</text>")
+    # edges with rel labels
     for e in edges:
-        if e.src in pos and e.dst in pos:
+        if e.src in pos and e.dst in pos and e.src in kept and e.dst in kept:
             x1, y1 = pos[e.src]
             x2, y2 = pos[e.dst]
             parts.append(f"<line x1='{x1:.0f}' y1='{y1:.0f}' x2='{x2:.0f}' y2='{y2:.0f}' stroke='#30363d' stroke-width='1'/>")
+            if e.rel in {"INDICATES", "DETECTED_BY", "CONTAINS"} and abs(x2 - x1) > 60:
+                mx, my = (x1 + x2) / 2, (y1 + y2) / 2 - 2
+                parts.append(f"<text x='{mx:.0f}' y='{my:.0f}' fill='#484f58' font-size='8' text-anchor='middle'>{e.rel.lower()}</text>")
+    # nodes
     for node in nodes:
+        if node.id not in pos:
+            continue
         x, y = pos[node.id]
-        col = colors.get(node.label, "#8b949e")
-        label = escape(str(node.props.get("display", node.id))[:22])
-        parts.append(f"<circle cx='{x:.0f}' cy='{y:.0f}' r='7' fill='{col}'/>")
-        parts.append(f"<text x='{x+9:.0f}' y='{y+4:.0f}' fill='#c9d1d9' font-size='10'>{label}</text>")
+        color = _COLORS.get(node.label, "#8b949e")
+        label = escape(str(node.props.get("display", node.id))[:24])
+        parts.append(f"<circle cx='{x:.0f}' cy='{y:.0f}' r='7' fill='{color}'/>")
+        anchor = "end" if _TIER.get(node.label, 1) == 4 else "start"
+        dx = -11 if anchor == "end" else 11
+        parts.append(f"<text x='{x+dx:.0f}' y='{y+4:.0f}' fill='#c9d1d9' font-size='10' text-anchor='{anchor}'>{label}</text>")
     parts.append("</svg>")
-    stats = f"{n} entity nodes, {len(edges)} edges (Evidence nodes hidden)"
+    stats = f"{len(kept)} nodes across {sum(1 for c in tiers.values() if c)} reasoning tiers, {len(edges)} typed edges (Evidence hidden)"
     return "".join(parts), stats
 
 
@@ -292,6 +356,55 @@ _BADGE = {"observed": "b-obs", "inferred": "b-inf", "speculative": "b-spec"}
 def _badge(status: str) -> str:
     cls = _BADGE.get(status, "b-spec")
     return f'<span class="badge {cls}">{escape(str(status))}</span>'
+
+
+def _evidence_summary(it) -> str:
+    obj = {k: v for k, v in it.object.items() if isinstance(v, (str, int, float, bool, list))}
+    bits = ", ".join(f"{k}={v}" for k, v in obj.items()) or it.artifact
+    return escape(f"{it.operation} — {bits}")[:300]
+
+
+def _build_appendix(store: EvidenceStore):
+    from ..core.provenance import provenance_of
+
+    rows = []
+    for it in store:
+        rows.append(
+            type("Ev", (), {
+                "id": it.id,
+                "source": it.source,
+                "status": provenance_of(it.source, it.confidence),
+                "confidence": it.confidence,
+                "summary": _evidence_summary(it),
+                "refs": escape(", ".join(it.evidence_refs) or "—"),
+                "ts": escape(str(it.ts)),
+            })
+        )
+    return rows
+
+
+def _build_assessment(summary, phases) -> tuple[str, str]:
+    """Generate the analyst assessment paragraph + recommended next step, phrased
+    to respect epistemic standing (static-only = capabilities, not confirmation)."""
+    fam = summary.family_hint
+    caps = summary.primary_capability
+    sims = []
+    if fam != "unknown":
+        sims.append(f"This sample <b>statically resembles {escape(fam)}</b> ({summary.family_confidence:.0%} marker similarity).")
+    sims.append(f"Static analysis identified its primary capability as <b>{escape(caps)}</b>"
+                f" across {summary.technique_count} ATT&amp;CK technique(s) and {summary.network_indicator_count} network indicator(s).")
+    if not summary.runtime_observed:
+        sims.append("Because execution was intentionally prevented (isolation not verified), "
+                    "network behavior, persistence, and encryption activity remain <b>unconfirmed</b> — "
+                    "every technique above is an <i>inference</i> from the binary's contents, not an observed event.")
+        nxt = ("Run the sample inside a verified isolated detonation environment "
+               "(see docs/handling-real-samples.md) to validate the inferred behavior and upgrade "
+               "the confidence timeline from static → dynamic → memory.")
+    else:
+        sims.append(f"Runtime behavior was observed; the highest confirmed phase was "
+                    f"<b>{escape(summary.highest_observed_phase)}</b>.")
+        nxt = "Capture a memory image post-detonation to corroborate injection/credential-access findings."
+    return " ".join(sims), nxt
 
 
 def render_html(inp: ReportInputs) -> str:
@@ -304,6 +417,9 @@ def render_html(inp: ReportInputs) -> str:
     graph_svg, graph_stats = _graph_svg(inp.graph)
     isolated = inp.isolation.startswith("verified")
     summary = build_summary(inp.store, inp.mappings, inp.phases, isolated=isolated)
+    breakdowns = {m.technique_id: confidence_breakdown(inp.store, m) for m in inp.mappings}
+    assessment, next_step = _build_assessment(summary, inp.phases)
+    appendix = _build_appendix(inp.store)
     return tmpl.render(
         run_id=inp.run_id,
         sample_name=escape(inp.sample_name),
@@ -313,6 +429,7 @@ def render_html(inp: ReportInputs) -> str:
         summary=summary,
         phases=inp.phases,
         mappings=inp.mappings,
+        breakdowns=breakdowns,
         timeline=inp.timeline,
         layers=layers,
         final_payload=final_payload,
@@ -322,6 +439,9 @@ def render_html(inp: ReportInputs) -> str:
         coverage=inp.coverage,
         graph_svg=graph_svg,
         graph_stats=graph_stats,
+        assessment=assessment,
+        next_step=next_step,
+        appendix=appendix,
     )
 
 

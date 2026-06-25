@@ -17,7 +17,7 @@ from ..analyzers.registry import REGISTRY, register_builtins
 from ..detect.sigma_gen import SigmaRule, generate_sigma
 from ..detect.yara_gen import YaraRule, generate_yara
 from ..reconstruct.attack_map import AttackMapping, map_evidence
-from ..reconstruct.graph import build_graph, graph_summary
+from ..reconstruct.graph import add_detections_to_graph, build_graph, graph_summary
 from ..reconstruct.narrative import Phase, build_narrative
 from ..reconstruct.timeline import TimelineEntry, build_timeline
 from ..reporting.coverage import CoverageReport, compute_coverage
@@ -102,12 +102,15 @@ def analyze_sample(
     mappings = map_evidence(store)
     phases = build_narrative(mappings)
     timeline = build_timeline(store)
-    graph = build_graph(store, mappings)
+    graph = build_graph(store, mappings, sample_name=sample.name)
 
     # --- Detections ---
     yara = generate_yara(store, sample)
     sigma = generate_sigma(store, mappings)
     coverage = compute_coverage(mappings, sigma, yara)
+
+    # Complete the reasoning graph: Technique -> Detection.
+    add_detections_to_graph(graph, mappings, yara=yara, sigma=sigma)
 
     audit.log(
         run_id=run_id,

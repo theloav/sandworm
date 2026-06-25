@@ -27,12 +27,26 @@ class TacticCoverage:
 
 
 @dataclass
+class RuleInventory:
+    techniques: int
+    behavioral_rules: int
+    ioc_rules: int
+    yara_rules: int
+    runtime_rules: int  # rules derived from observed runtime/memory evidence
+
+
+@dataclass
 class CoverageReport:
     per_tactic: list[TacticCoverage]
     overall: float
+    inventory: RuleInventory
 
     def to_dict(self) -> dict:
-        return {"per_tactic": [asdict(t) for t in self.per_tactic], "overall": self.overall}
+        return {
+            "per_tactic": [asdict(t) for t in self.per_tactic],
+            "overall": self.overall,
+            "inventory": asdict(self.inventory),
+        }
 
 
 def _covered_ids(sigma: list[SigmaRule], yara: list[YaraRule], observed_ids: set[str]) -> set[str]:
@@ -72,4 +86,16 @@ def compute_coverage(
             TacticCoverage(tactic=tactic, observed=obs, covered=cov, score=round(len(cov) / len(obs), 3))
         )
     overall = round(total_cov / total_obs, 3) if total_obs else 0.0
-    return CoverageReport(per_tactic=per_tactic, overall=overall)
+
+    # A rule is "runtime" if it would only fire on observed runtime/memory data;
+    # for a static run none of our generated rules are runtime-derived yet.
+    behavioral = sum(1 for r in sigma_rules if r.kind == "behavioral")
+    ioc = sum(1 for r in sigma_rules if r.kind == "ioc")
+    inventory = RuleInventory(
+        techniques=len(observed_ids),
+        behavioral_rules=behavioral,
+        ioc_rules=ioc,
+        yara_rules=len(yara_rules),
+        runtime_rules=0,
+    )
+    return CoverageReport(per_tactic=per_tactic, overall=overall, inventory=inventory)

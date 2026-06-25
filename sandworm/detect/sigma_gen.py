@@ -22,6 +22,7 @@ class SigmaRule:
     level: str = "high"
     tags: list[str] = field(default_factory=list)
     description: str = ""
+    kind: str = "ioc"  # "ioc" (matches atoms that rotate) | "behavioral" (survives infra changes)
 
     def to_yaml(self) -> str:
         lines = [
@@ -119,7 +120,54 @@ def generate_sigma(store: EvidenceStore, mappings: list[AttackMapping]) -> list[
                 logsource={"category": "registry_set"},
                 detection={"selection": {"TargetObject|contains": sorted(set(keys))[:15]}, "condition": "selection"},
                 tags=_attack_tag(mappings, lambda m: m.tactic == "persistence"),
+                kind="behavioral",
             )
         )
 
+    rules.extend(_behavioral_rules(store, mappings))
     return rules
+
+
+def _has_capability(store: EvidenceStore, capability: str) -> bool:
+    return any(it.object.get("capability") == capability for it in store)
+
+
+def _behavioral_rules(store: EvidenceStore, mappings: list[AttackMapping]) -> list[SigmaRule]:
+    """Behavior-based rules that survive infrastructure changes (file/process
+    patterns, not rotating IOCs). Derived from capability evidence."""
+    out: list[SigmaRule] = []
+
+    # Shadow-copy / recovery deletion — extremely high-signal, infra-independent.
+    if _has_capability(store, "inhibit_recovery"):
+        out.append(
+            SigmaRule(
+                title="SANDWORM: Shadow copy / backup deletion (ransomware pre-encryption)",
+                description="Process deletes volume shadow copies or backups — classic ransomware pre-encryption step",
+                logsource={"category": "process_creation", "product": "windows"},
+                detection={
+                    "selection_img": {"Image|endswith": ["\\vssadmin.exe", "\\wbadmin.exe", "\\bcdedit.exe", "\\wmic.exe"]},
+                    "selection_cmd": {"CommandLine|contains|all": ["delete", "shadow"]},
+                    "condition": "selection_img or selection_cmd",
+                },
+                tags=_attack_tag(mappings, lambda m: m.technique_id == "T1490") or ["attack.impact", "attack.t1490"],
+                kind="behavioral",
+            )
+        )
+
+    # Mass file rewrite to a ransom extension — the encryption behavior itself.
+    if _has_capability(store, "ransomware"):
+        out.append(
+            SigmaRule(
+                title="SANDWORM: Ransomware file-encryption behavior",
+                description="High-volume file writes to a ransom/encrypted extension plus a dropped ransom note",
+                logsource={"category": "file_event", "product": "windows"},
+                detection={
+                    "selection_ext": {"TargetFilename|endswith": [".wnry", ".wncry", ".locky", ".crypt", ".encrypted"]},
+                    "selection_note": {"TargetFilename|contains": ["DECRYPT", "README", "HOW_TO", "WanaDecryptor"]},
+                    "condition": "selection_ext or selection_note",
+                },
+                tags=_attack_tag(mappings, lambda m: m.technique_id == "T1486") or ["attack.impact", "attack.t1486"],
+                kind="behavioral",
+            )
+        )
+    return out
