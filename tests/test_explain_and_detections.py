@@ -71,6 +71,53 @@ def test_coverage_inventory_counts():
     assert cov.overall > 0
 
 
+def test_coverage_does_not_claim_observed_when_static():
+    # static-only: nothing observed, so runtime coverage must be N/A, not 100%.
+    store = EvidenceStore()
+    store.append(EvidenceItem(run_id="r", source="static.php", artifact="api_call", operation="exec",
+                 subject={"a": "x"}, object={"sink": "system"}, confidence=0.9))
+    mappings = map_evidence(store)
+    cov = compute_coverage(mappings, generate_sigma(store, mappings), [])
+    assert cov.observed_techniques == 0
+    assert cov.runtime_coverage is None  # N/A, not a misleading number
+    assert cov.inferred_techniques >= 1
+
+
+def test_webshell_risk_and_behavioral_rule():
+    from sandworm.reconstruct.narrative import build_narrative
+    from sandworm.reporting.summary import build_summary
+
+    store = EvidenceStore()
+    store.append(EvidenceItem(run_id="r", source="static.php", artifact="file", operation="exec",
+                 subject={"a": "x"}, object={"verdict": "php_webshell"}, confidence=0.8))
+    for sink in ("system", "proc_open", "popen"):
+        store.append(EvidenceItem(run_id="r", source="static.php", artifact="api_call", operation="exec",
+                     subject={"a": "x"}, object={"sink": sink}, confidence=0.9))
+    store.append(EvidenceItem(run_id="r", source="static.php", artifact="api_call", operation="exec",
+                 subject={"a": "x"}, object={"sink": "move_uploaded_file"}, confidence=0.7))
+    mappings = map_evidence(store)
+    summary = build_summary(store, mappings, build_narrative(mappings), isolated=False)
+    assert summary.risk in {"High", "Critical"}
+    assert summary.likelihood == "High"
+    assert any("execution sink" in r for r in summary.risk_reasons)
+    assert any("Web-shell" in r for r in summary.risk_reasons)
+
+    sigma = generate_sigma(store, mappings)
+    assert any(r.kind == "behavioral" and "Web server" in r.title for r in sigma)
+
+
+def test_sigma_hostnames_are_bare():
+    store = EvidenceStore()
+    store.append(EvidenceItem(run_id="r", source="static.common", artifact="network", operation="resolve",
+                 subject={"a": "x"}, object={"kind": "url", "value": "https://crt.sh/?q=%25.evil"},
+                 details={"ioc": True}, confidence=0.7))
+    sigma = generate_sigma(store, map_evidence(store))
+    c2 = [r for r in sigma if "C2" in r.title][0]
+    hosts = c2.detection["selection"]["DestinationHostname|contains"]
+    assert "crt.sh" in hosts
+    assert all("https://" not in h and "?" not in h for h in hosts)
+
+
 def test_reasoning_graph_has_typed_chain():
     store = _ransomware_store()
     mappings = map_evidence(store)

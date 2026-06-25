@@ -59,6 +59,11 @@ _TEMPLATE = """<!DOCTYPE html>
  .card .k{color:#8b949e;font-size:11px;text-transform:uppercase;letter-spacing:.4px}
  .card .v{font-size:16px;color:#e6edf3;margin-top:3px}
  .banner{background:#161b22;border:1px solid #30363d;border-left:4px solid #f0883e;border-radius:6px;padding:12px 16px;margin-top:10px}
+ .risk{display:inline-block;border-radius:5px;padding:2px 10px;font-weight:bold;font-size:14px}
+ .r-Critical{background:#f8514922;border:1px solid #f85149;color:#ff7b72}
+ .r-High{background:#db6d2822;border:1px solid #db6d28;color:#f0883e}
+ .r-Medium{background:#9e6a0322;border:1px solid #d29922;color:#e3b341}
+ .r-Low{background:#23863622;border:1px solid #238636;color:#7ee787}
 </style></head>
 <body>
 <header>
@@ -72,17 +77,19 @@ _TEMPLATE = """<!DOCTYPE html>
  <h2>Executive summary</h2>
  {% if summary.family_hint != 'unknown' %}
  <div class="banner">Suspected family: <b>{{ summary.family_hint }}</b>
-   (static fingerprint similarity {{ '%.0f'|format(summary.family_confidence*100) }}%) —
-   <span class="muted">based on static markers, not a confirmed/behavioral attribution</span></div>
+   (static fingerprint similarity {{ '%.0f'|format(summary.family_confidence*100) }}%)
+   — matched markers: {% for mk in summary.family_markers %}<span class="pill">{{ mk }}</span>{% endfor %}
+   <br><span class="muted">based on static markers, not a confirmed/behavioral attribution</span></div>
  {% endif %}
  <div class="summary">
-  <div class="card"><div class="k">Analysis mode</div><div class="v">{{ summary.analysis_mode }}</div></div>
-  <div class="card"><div class="k">Runtime observed</div><div class="v">{{ 'Yes' if summary.runtime_observed else 'No' }}</div></div>
+  <div class="card"><div class="k">Risk</div><div class="v">{{ risk_pill(summary.risk)|safe }}</div></div>
+  <div class="card"><div class="k">Likelihood malicious</div><div class="v">{{ summary.likelihood }}</div></div>
+  <div class="card"><div class="k">Execution confirmed</div><div class="v">{{ 'Yes' if summary.execution_confirmed else 'No' }}</div></div>
+  <div class="card"><div class="k">Family</div><div class="v">{{ summary.family_hint }}{% if summary.family_hint != 'unknown' %} <span class="muted">({{ '%.0f'|format(summary.family_confidence*100) }}%)</span>{% endif %}</div></div>
   <div class="card"><div class="k">Primary capability</div><div class="v">{{ summary.primary_capability }}</div></div>
-  <div class="card"><div class="k">Highest observed phase</div><div class="v">{{ summary.highest_observed_phase }}</div></div>
+  <div class="card"><div class="k">Analysis mode</div><div class="v">{{ summary.analysis_mode }}</div></div>
   <div class="card"><div class="k">Highest inferred phase</div><div class="v">{{ summary.highest_inferred_phase }} <span class="muted">(static)</span></div></div>
-  <div class="card"><div class="k">ATT&amp;CK techniques</div><div class="v">{{ summary.technique_count }}</div></div>
-  <div class="card"><div class="k">Network indicators</div><div class="v">{{ summary.network_indicator_count }}</div></div>
+  <div class="card"><div class="k">ATT&amp;CK techniques</div><div class="v">{{ summary.technique_count }} <span class="muted">({{ summary.network_indicator_count }} net IOC)</span></div></div>
  </div>
 </section>
 
@@ -173,9 +180,11 @@ _TEMPLATE = """<!DOCTYPE html>
 
 <section>
  <h2>Detection coverage</h2>
- <p>Overall: <b>{{ '%.0f'|format(coverage.overall*100) }}%</b> of observed techniques are covered by generated rules.</p>
+ <p><b>{{ '%.0f'|format(coverage.overall*100) }}%</b> of <b>inferred</b> ATT&amp;CK techniques are covered by generated rules.
+    Runtime coverage of <b>observed</b> techniques: <b>{{ '%.0f%%'|format(coverage.runtime_coverage*100) if coverage.runtime_coverage is not none else 'N/A (nothing executed)' }}</b>.</p>
  <div class="summary">
-  <div class="card"><div class="k">ATT&amp;CK techniques</div><div class="v">{{ coverage.inventory.techniques }}</div></div>
+  <div class="card"><div class="k">Inferred ATT&amp;CK</div><div class="v">{{ coverage.inferred_techniques }}</div></div>
+  <div class="card"><div class="k">Observed ATT&amp;CK</div><div class="v">{{ coverage.observed_techniques }}</div></div>
   <div class="card"><div class="k">Behavioral rules</div><div class="v">{{ coverage.inventory.behavioral_rules }}</div></div>
   <div class="card"><div class="k">IOC rules</div><div class="v">{{ coverage.inventory.ioc_rules }}</div></div>
   <div class="card"><div class="k">YARA rules</div><div class="v">{{ coverage.inventory.yara_rules }}</div></div>
@@ -203,6 +212,13 @@ _TEMPLATE = """<!DOCTYPE html>
 
 <section>
  <h2>Analyst assessment</h2>
+ <div class="summary">
+  <div class="card"><div class="k">Risk</div><div class="v">{{ risk_pill(summary.risk)|safe }}</div></div>
+  <div class="card"><div class="k">Likelihood</div><div class="v">{{ summary.likelihood }}</div></div>
+  <div class="card"><div class="k">Execution confirmed</div><div class="v">{{ 'Yes' if summary.execution_confirmed else 'No' }}</div></div>
+ </div>
+ <p><b>Rationale:</b></p>
+ <ul>{% for r in summary.risk_reasons %}<li>{{ r }}</li>{% endfor %}</ul>
  <div class="banner">{{ assessment|safe }}</div>
  <p><b>Recommended next step:</b> {{ next_step }}</p>
 </section>
@@ -358,6 +374,11 @@ def _badge(status: str) -> str:
     return f'<span class="badge {cls}">{escape(str(status))}</span>'
 
 
+def _risk_pill(risk: str) -> str:
+    safe = risk if risk in {"Critical", "High", "Medium", "Low"} else "Low"
+    return f'<span class="risk r-{safe}">{escape(str(risk))}</span>'
+
+
 def _evidence_summary(it) -> str:
     obj = {k: v for k, v in it.object.items() if isinstance(v, (str, int, float, bool, list))}
     bits = ", ".join(f"{k}={v}" for k, v in obj.items()) or it.artifact
@@ -388,7 +409,7 @@ def _build_assessment(summary, phases) -> tuple[str, str]:
     to respect epistemic standing (static-only = capabilities, not confirmation)."""
     fam = summary.family_hint
     caps = summary.primary_capability
-    sims = []
+    sims = [f"<b>Assessed risk: {escape(summary.risk)}</b> (likelihood {escape(summary.likelihood)} that this is malicious)."]
     if fam != "unknown":
         sims.append(f"This sample <b>statically resembles {escape(fam)}</b> ({summary.family_confidence:.0%} marker similarity).")
     sims.append(f"Static analysis identified its primary capability as <b>{escape(caps)}</b>"
@@ -411,6 +432,7 @@ def render_html(inp: ReportInputs) -> str:
     env = Environment(autoescape=False)
     env.globals["conf_class"] = _conf_class
     env.globals["badge"] = _badge
+    env.globals["risk_pill"] = _risk_pill
     tmpl = env.from_string(_TEMPLATE)
     layers, final_payload = _collect_layers(inp.store)
     iocs = _collect_iocs(inp.store)

@@ -88,13 +88,14 @@ def generate_sigma(store: EvidenceStore, mappings: list[AttackMapping]) -> list[
             )
         )
 
-    # 2) Network/C2 rule from network egress evidence.
+    # 2) Network/C2 rule from network egress evidence. Normalize URLs to
+    # hostnames so DestinationHostname matches real telemetry (not full URLs).
     hosts: list[str] = []
     for it in store:
         if it.artifact in {"network", "host"} and it.operation in {"connect", "resolve"}:
             h = it.object.get("host") or it.object.get("value")
             if h:
-                hosts.append(str(h))
+                hosts.append(_hostname(str(h)))
     if hosts:
         rules.append(
             SigmaRule(
@@ -128,8 +129,20 @@ def generate_sigma(store: EvidenceStore, mappings: list[AttackMapping]) -> list[
     return rules
 
 
+def _hostname(value: str) -> str:
+    """Reduce a URL/host to its bare hostname for DestinationHostname matching."""
+    import re
+
+    v = re.sub(r"^[a-z]+://", "", value, flags=re.I)
+    return v.split("/")[0].split("?")[0].split(":")[0]
+
+
 def _has_capability(store: EvidenceStore, capability: str) -> bool:
     return any(it.object.get("capability") == capability for it in store)
+
+
+def _has_verdict(store: EvidenceStore, verdict: str) -> bool:
+    return any(it.object.get("verdict") == verdict for it in store)
 
 
 def _behavioral_rules(store: EvidenceStore, mappings: list[AttackMapping]) -> list[SigmaRule]:
@@ -150,6 +163,24 @@ def _behavioral_rules(store: EvidenceStore, mappings: list[AttackMapping]) -> li
                     "condition": "selection_img or selection_cmd",
                 },
                 tags=_attack_tag(mappings, lambda m: m.technique_id == "T1490") or ["attack.impact", "attack.t1490"],
+                kind="behavioral",
+            )
+        )
+
+    # Web shell — the *behavior* is a web-server worker spawning a shell. This
+    # survives renaming the shell file / rotating the C2, unlike an IOC rule.
+    if _has_verdict(store, "php_webshell"):
+        out.append(
+            SigmaRule(
+                title="SANDWORM: Web server process spawning a shell (web shell)",
+                description="A web-server worker (php/httpd/nginx/w3wp) spawns a command interpreter — classic web-shell command execution",
+                logsource={"category": "process_creation", "product": "windows"},
+                detection={
+                    "selection_parent": {"ParentImage|endswith": ["\\php.exe", "\\php-cgi.exe", "\\httpd.exe", "\\w3wp.exe", "\\nginx.exe"]},
+                    "selection_child": {"Image|endswith": ["\\cmd.exe", "\\powershell.exe", "\\sh", "\\bash", "\\whoami.exe"]},
+                    "condition": "selection_parent and selection_child",
+                },
+                tags=_attack_tag(mappings, lambda m: m.technique_id in {"T1505.003", "T1059"}) or ["attack.persistence", "attack.t1505.003"],
                 kind="behavioral",
             )
         )

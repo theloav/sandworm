@@ -38,14 +38,20 @@ class RuleInventory:
 @dataclass
 class CoverageReport:
     per_tactic: list[TacticCoverage]
-    overall: float
+    overall: float                    # detection coverage of MAPPED (mostly inferred) techniques
     inventory: RuleInventory
+    observed_techniques: int = 0      # techniques confirmed by runtime/memory
+    inferred_techniques: int = 0      # techniques supported only by static evidence
+    runtime_coverage: float | None = None  # coverage of OBSERVED techniques; None when none observed
 
     def to_dict(self) -> dict:
         return {
             "per_tactic": [asdict(t) for t in self.per_tactic],
             "overall": self.overall,
             "inventory": asdict(self.inventory),
+            "observed_techniques": self.observed_techniques,
+            "inferred_techniques": self.inferred_techniques,
+            "runtime_coverage": self.runtime_coverage,
         }
 
 
@@ -98,4 +104,23 @@ def compute_coverage(
         yara_rules=len(yara_rules),
         runtime_rules=0,
     )
-    return CoverageReport(per_tactic=per_tactic, overall=overall, inventory=inventory)
+
+    # Epistemic split: "observed" techniques are runtime/memory-confirmed. On a
+    # static-only run there are none, so runtime coverage is N/A (None) rather
+    # than a misleading 100%.
+    obs_ids = {m.technique_id for m in mappings if m.status == "observed"}
+    inf_ids = {m.technique_id for m in mappings if m.status != "observed"}
+    runtime_cov: float | None
+    if obs_ids:
+        runtime_cov = round(len(obs_ids & covered_ids) / len(obs_ids), 3)
+    else:
+        runtime_cov = None
+
+    return CoverageReport(
+        per_tactic=per_tactic,
+        overall=overall,
+        inventory=inventory,
+        observed_techniques=len(obs_ids),
+        inferred_techniques=len(inf_ids),
+        runtime_coverage=runtime_cov,
+    )
