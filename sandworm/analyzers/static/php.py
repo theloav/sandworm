@@ -531,9 +531,19 @@ class PhpAnalyzer(BaseAnalyzer):
                 )
             )
 
-        # Webshell verdict when obfuscation + a code/command sink co-occur.
+        # Webshell verdict. A shell is flagged when an execution sink co-occurs
+        # with EITHER obfuscation OR attacker-controllable input — real shells are
+        # frequently shipped in cleartext (the body is an HTML/JS admin panel), so
+        # requiring obfuscation alone would miss them.
         sink_names = {s for _, s, _ in find_sinks(scanned)}
-        if layers and (sink_names & (set(COMMAND_SINKS) | set(CODE_SINKS))):
+        exec_sinks = sink_names & (set(COMMAND_SINKS) | set(CODE_SINKS))
+        if exec_sinks and (layers or tainted):
+            if layers:
+                rationale = "obfuscated payload unwraps to a code/command execution sink"
+                conf = 0.85
+            else:
+                rationale = "command/code-execution sink reachable from attacker-controllable input"
+                conf = 0.8
             items.append(
                 ctx.ev(
                     source="static.php",
@@ -542,11 +552,12 @@ class PhpAnalyzer(BaseAnalyzer):
                     subject={"analyzer": self.name},
                     object={"verdict": "php_webshell"},
                     details={
-                        "rationale": "obfuscated payload unwraps to a code/command execution sink",
+                        "rationale": rationale,
                         "layers": len(layers),
-                        "sinks": sorted(sink_names),
+                        "sinks": sorted(exec_sinks),
+                        "tainted_input": tainted,
                     },
-                    confidence=0.85,
+                    confidence=conf,
                     evidence_refs=[ref],
                 )
             )

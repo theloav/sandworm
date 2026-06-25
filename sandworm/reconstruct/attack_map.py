@@ -14,6 +14,9 @@ from dataclasses import asdict, dataclass
 
 from ..core.evidence import EvidenceItem, EvidenceStore
 
+# Cap how many distinct observations are spelled out in a mapping's "why".
+_WHY_MAX_CLAUSES = 6
+
 # ATT&CK tactic order, used by the coverage report + narrative phases.
 TACTICS = [
     "reconnaissance", "resource-development", "initial-access", "execution",
@@ -118,7 +121,7 @@ def _rules() -> list[_Rule]:
         _Rule(
             "T1505.003", "Web Shell", "persistence", 0.85,
             lambda it: it.object.get("verdict") == "php_webshell",
-            "obfuscated PHP unwraps to an execution sink (web shell): {detail}",
+            "PHP web shell: payload reaches a code/command execution sink ({detail})",
         ),
         _Rule(
             "T1056.001", "Input Capture: Keylogging", "collection", 0.6,
@@ -176,11 +179,19 @@ def map_evidence(store: EvidenceStore) -> list[AttackMapping]:
                 existing.evidence_ids.append(it.id)
                 # More corroborating evidence raises confidence (capped).
                 existing.confidence = round(min(0.99, max(existing.confidence, conf) + 0.03), 3)
-                if detail not in existing.why:
+                # Keep the explanation readable: list the first few distinct
+                # observations, then summarize the rest rather than emitting a
+                # wall of text. (evidence_ids still record every backing item.)
+                if detail not in existing.why and existing.why.count("; ") < _WHY_MAX_CLAUSES:
                     existing.why += f"; {why}"
     # Stable order: by tactic order then technique id.
     order = {t: i for i, t in enumerate(TACTICS)}
-    return sorted(agg.values(), key=lambda m: (order.get(m.tactic, 99), m.technique_id))
+    out = sorted(agg.values(), key=lambda m: (order.get(m.tactic, 99), m.technique_id))
+    for m in out:
+        extra = len(m.evidence_ids) - (m.why.count("; ") + 1)
+        if extra > 0:
+            m.why += f" (+{extra} more corroborating observations)"
+    return out
 
 
 def tactic_coverage(mappings: list[AttackMapping]) -> dict[str, list[str]]:

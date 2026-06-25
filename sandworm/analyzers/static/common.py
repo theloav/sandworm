@@ -37,6 +37,22 @@ _IOC_PATTERNS = {
 # Domains we never want to surface as malicious IOCs.
 _DOMAIN_ALLOWLIST = {"example.com", "example.org", "localhost", "schemas.microsoft.com", "w3.org"}
 
+# Real public TLDs. The bare-domain regex otherwise matches JavaScript member
+# access (`document.getElementById`, `a.onclick`), object paths (`d.msg`), and
+# filenames (`payload.jpg`) — all of which flood the IOC list with garbage and
+# poison the generated C2 detections. Requiring a known TLD removes that noise
+# while keeping real domains (`evil.id`, `c2.example.ru`). Extend as needed.
+_COMMON_TLDS = frozenset(
+    """
+    com net org info biz xyz top site online club shop store app dev page link live
+    icu rest pro mobi asia name ws cc tv me io co gg sh ai dev cloud space website tech
+    us uk ca au de fr nl ru cn jp kr in br id my sg ph th vn tw hk it es se no fi pl
+    ua tr ir ng za mx ar cl pe pt gr cz ro hu be at ch dk ie il sa ae kz by md
+    tk ml ga cf gq su pw cyou
+    gov edu mil int
+    """.split()
+)
+
 
 def shannon_entropy(data: bytes) -> float:
     if not data:
@@ -73,10 +89,11 @@ def extract_iocs(text: str) -> list[tuple[str, str, float, str]]:
         for m in pat.finditer(text):
             val = m.group()
             if kind == "domain":
-                if val.lower() in _DOMAIN_ALLOWLIST or val.lower() in url_hosts:
+                # Must end in a real public TLD — this rejects JS member access
+                # (`a.onclick`), object paths (`d.msg`), and filenames (`x.jpg`).
+                if val.rsplit(".", 1)[-1].lower() not in _COMMON_TLDS:
                     continue
-                # require a plausible TLD shape, skip things like file.dll
-                if val.lower().endswith((".dll", ".exe", ".php", ".js", ".sys", ".so")):
+                if val.lower() in _DOMAIN_ALLOWLIST or val.lower() in url_hosts:
                     continue
             key = (kind, val)
             if key in seen:
