@@ -47,12 +47,54 @@ class RunResult:
     notes: list[str] = field(default_factory=list)
 
 
+def _ingest_recorded_reports(
+    *, cape_report: str | None, memory_report: str | None, ctx: Context, sample: Sample,
+    store: EvidenceStore, notes: list[str], audit: AuditLogger, run_id: str,
+) -> list[str]:
+    """Ingest recorded dynamic/memory reports into the evidence store.
+
+    Replaying a *recorded* report is NOT detonation — it transforms evidence a
+    prior, properly-isolated run already produced and executes nothing. So this
+    path deliberately does not pass through the isolation gate; it is as safe as
+    static analysis and runs offline. (Live detonation stays gated in the
+    registry.) The resulting ``dynamic.*``/``memory.*`` evidence automatically
+    upgrades technique standing inferred → observed downstream.
+    """
+    import json
+
+    ran: list[str] = []
+    ref = f"sample:{sample.sha256}"
+    if cape_report and Path(cape_report).exists():
+        from ..analyzers.dynamic.windows_cape import normalize_cape_report
+
+        report = json.loads(Path(cape_report).read_text())
+        items = list(normalize_cape_report(report, ctx, ref))
+        store.extend(items)
+        ran.append("dynamic.windows.cape(replay)")
+        notes.append(f"ingested recorded dynamic report ({len(items)} events; replay — no live detonation)")
+        audit.log(run_id=run_id, action="ingest_dynamic_report", source="dynamic.windows.cape",
+                  sample_hash=sample.sha256, events=len(items), path=str(cape_report))
+    if memory_report and Path(memory_report).exists():
+        from ..analyzers.memory.vol3 import normalize_memory_report
+
+        report = json.loads(Path(memory_report).read_text())
+        items = list(normalize_memory_report(report, ctx, ref))
+        store.extend(items)
+        ran.append("memory.vol3(replay)")
+        notes.append(f"ingested recorded memory report ({len(items)} artifacts; replay — no live detonation)")
+        audit.log(run_id=run_id, action="ingest_memory_report", source="memory.vol3",
+                  sample_hash=sample.sha256, artifacts=len(items), path=str(memory_report))
+    return ran
+
+
 def analyze_sample(
     sample: Sample,
     *,
     config: Config | None = None,
     run_id: str | None = None,
     enable_dynamic: bool = True,
+    cape_report: str | None = None,
+    memory_report: str | None = None,
 ) -> RunResult:
     config = config or get_config()
     run_id = run_id or uuid.uuid4().hex[:12]
@@ -97,6 +139,14 @@ def analyze_sample(
         items = analyzer.analyze(sample, ctx)
         store.extend(items)
         analyzers_run.append(analyzer.name)
+
+    # --- Recorded dynamic/memory replay (offline-safe; not a live detonation) ---
+    analyzers_run.extend(
+        _ingest_recorded_reports(
+            cape_report=cape_report, memory_report=memory_report, ctx=ctx, sample=sample,
+            store=store, notes=notes, audit=audit, run_id=run_id,
+        )
+    )
 
     # --- Reconstruction ---
     mappings = map_evidence(store)

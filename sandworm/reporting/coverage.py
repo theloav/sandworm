@@ -95,23 +95,30 @@ def compute_coverage(
         )
     overall = round(total_cov / total_obs, 3) if total_obs else 0.0
 
-    # A rule is "runtime" if it would only fire on observed runtime/memory data;
-    # for a static run none of our generated rules are runtime-derived yet.
-    behavioral = sum(1 for r in sigma_rules if r.kind == "behavioral")
-    ioc = sum(1 for r in sigma_rules if r.kind == "ioc")
-    inventory = RuleInventory(
-        techniques=len(observed_ids),
-        behavioral_rules=behavioral,
-        ioc_rules=ioc,
-        yara_rules=len(yara_rules),
-        runtime_rules=0,
-    )
-
     # Epistemic split: "observed" techniques are runtime/memory-confirmed. On a
     # static-only run there are none, so runtime coverage is N/A (None) rather
     # than a misleading 100%.
     obs_ids = {m.technique_id for m in mappings if m.status == "observed"}
     inf_ids = {m.technique_id for m in mappings if m.status != "observed"}
+
+    # A rule is "runtime-derived" once it covers a technique we actually OBSERVED
+    # (i.e. it would fire on captured runtime/memory data). Zero on a static run.
+    behavioral = sum(1 for r in sigma_rules if r.kind == "behavioral")
+    ioc = sum(1 for r in sigma_rules if r.kind == "ioc")
+    runtime_rules = 0
+    if obs_ids:
+        for r in sigma_rules:
+            tags = {t.replace("attack.", "").upper() for t in r.tags}
+            if tags & {t.upper() for t in obs_ids}:
+                runtime_rules += 1
+    inventory = RuleInventory(
+        techniques=len(observed_ids),
+        behavioral_rules=behavioral,
+        ioc_rules=ioc,
+        yara_rules=len(yara_rules),
+        runtime_rules=runtime_rules,
+    )
+
     runtime_cov: float | None
     if obs_ids:
         runtime_cov = round(len(obs_ids & covered_ids) / len(obs_ids), 3)

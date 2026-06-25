@@ -12,19 +12,46 @@ from dataclasses import dataclass
 from ..core.provenance import OBSERVED, SPECULATIVE, strongest
 from .attack_map import AttackMapping
 
-# Lifecycle phases in canonical order, each backed by ATT&CK tactics.
-LIFECYCLE = [
-    ("execution", ["execution"]),
-    ("unpack/deobfuscate", ["defense-evasion"]),
-    ("injection", ["privilege-escalation", "defense-evasion"]),
-    ("discovery", ["discovery", "reconnaissance"]),
-    ("credential-access", ["credential-access"]),
-    ("persistence", ["persistence"]),
-    ("command-and-control", ["command-and-control"]),
-    ("collection", ["collection"]),
-    ("exfiltration", ["exfiltration"]),
-    ("impact", ["impact"]),
+# Lifecycle phases in canonical order.
+LIFECYCLE_ORDER = [
+    "execution", "unpack/deobfuscate", "injection", "discovery",
+    "credential-access", "persistence", "command-and-control",
+    "collection", "exfiltration", "impact",
 ]
+
+# Default phase for each ATT&CK tactic.
+_PHASE_BY_TACTIC = {
+    "execution": "execution",
+    "defense-evasion": "unpack/deobfuscate",
+    "privilege-escalation": "injection",
+    "discovery": "discovery",
+    "reconnaissance": "discovery",
+    "credential-access": "credential-access",
+    "persistence": "persistence",
+    "command-and-control": "command-and-control",
+    "collection": "collection",
+    "exfiltration": "exfiltration",
+    "impact": "impact",
+}
+
+# Per-technique overrides: a technique whose tactic's default phase would be
+# misleading. e.g. Process Injection is tagged "defense-evasion" in ATT&CK, but
+# in the *lifecycle* it belongs to injection — NOT to unpack/deobfuscate (where
+# T1027 Obfuscated Files correctly lives). This is what stops T1027 and T1055
+# from both appearing under "injection".
+_PHASE_OVERRIDE = {
+    "T1055": "injection",
+    "T1055.001": "injection",
+    "T1055.002": "injection",
+    "T1055.003": "injection",
+    "T1055.004": "injection",
+    "T1055.012": "injection",
+    "T1620": "injection",
+}
+
+
+def _phase_of(m: AttackMapping) -> str:
+    return _PHASE_OVERRIDE.get(m.technique_id) or _PHASE_BY_TACTIC.get(m.tactic, "execution")
 
 
 @dataclass
@@ -37,22 +64,19 @@ class Phase:
 
 
 def build_narrative(mappings: list[AttackMapping]) -> list[Phase]:
-    by_tactic: dict[str, list[AttackMapping]] = {}
+    # Assign each technique to exactly ONE lifecycle phase so a technique never
+    # appears under two phases (e.g. T1027 under both unpack and injection).
+    by_phase: dict[str, list[AttackMapping]] = {name: [] for name in LIFECYCLE_ORDER}
+    placed: set[str] = set()
     for m in mappings:
-        by_tactic.setdefault(m.tactic, []).append(m)
+        if m.technique_id in placed:
+            continue
+        placed.add(m.technique_id)
+        by_phase[_phase_of(m)].append(m)
 
     phases: list[Phase] = []
-    for name, tactics in LIFECYCLE:
-        techs: list[AttackMapping] = []
-        for t in tactics:
-            techs.extend(by_tactic.get(t, []))
-        # de-dupe by technique id
-        seen = set()
-        uniq = []
-        for m in techs:
-            if m.technique_id not in seen:
-                seen.add(m.technique_id)
-                uniq.append(m)
+    for name in LIFECYCLE_ORDER:
+        uniq = by_phase[name]
         reached = bool(uniq)
         status = strongest([m.status for m in uniq]) if uniq else SPECULATIVE
         if reached:

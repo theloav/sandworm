@@ -50,6 +50,8 @@ class ExecutiveSummary:
     highest_inferred_phase: str
     family_hint: str              # "unknown" if not confidently fingerprinted
     family_confidence: float
+    family_confidence_label: str  # qualitative standing of the attribution (e.g. "Medium")
+    family_basis: str             # what the similarity is computed from
     family_markers: list[str]     # what matched (explainable attribution)
     family_components: list[tuple[str, str]]  # per-dimension attribution breakdown
     primary_capability: str
@@ -249,6 +251,12 @@ def build_summary(
     isolated: bool,
 ) -> ExecutiveSummary:
     family, fam_conf, markers = _family_hint(store)
+    # The similarity number is a static string/resource match only. Until runtime
+    # corroborates it, the *standing* of the attribution is Medium, not High — so
+    # an analyst never reads "95%" as a confirmed behavioral match.
+    family_runtime_confirmed = runtime_observed(phases) and family != "unknown"
+    family_confidence_label = "High" if family_runtime_confirmed else "Medium" if family != "unknown" else "—"
+    family_basis = "static string/resource markers" + ("" if not family_runtime_confirmed else " + runtime")
     if family != "unknown":
         # Honest, transparent attribution: say which dimensions actually
         # contributed and which are still pending (so 95% is never mistaken for a
@@ -274,6 +282,8 @@ def build_summary(
         highest_inferred_phase=highest_inferred_phase(phases),
         family_hint=family,
         family_confidence=fam_conf,
+        family_confidence_label=family_confidence_label,
+        family_basis=family_basis,
         family_markers=markers,
         family_components=family_components,
         primary_capability=_primary_capability(store, mappings),

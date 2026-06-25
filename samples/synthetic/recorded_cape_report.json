@@ -1,0 +1,16 @@
+{
+  "_comment": "SYNTHETIC recorded CAPE/DRAKVUF report for offline demo of the SANDWORM dynamic lane. No real malware was executed to produce this; it models a benign injection-loader so 'sandworm analyze ... --cape-report' can demonstrate inferred -> observed upgrades. See docs/handling-real-samples.md.",
+  "behavior": {
+    "processes": [
+      {"pid": 1840, "ppid": 1200, "process_name": "loader.exe", "parent_name": "explorer.exe", "command_line": "loader.exe"},
+      {"pid": 2604, "ppid": 1840, "process_name": "notepad.exe", "parent_name": "loader.exe", "command_line": "C:\\Windows\\System32\\notepad.exe"},
+      {"pid": 3120, "ppid": 1840, "process_name": "cmd.exe", "parent_name": "loader.exe", "command_line": "cmd.exe /c vssadmin delete shadows /all /quiet"}
+    ],
+    "apistats_flat": ["VirtualAllocEx", "WriteProcessMemory", "CreateRemoteThread", "RegSetValueExW", "WinHttpConnect"],
+    "regkey_written": ["HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\Updater"]
+  },
+  "network": {"hosts": ["185.234.218.42"]},
+  "dropped": [
+    {"name": "C:\\Users\\Public\\svc.dll", "sha256": "9f2c1b7a4e6d0a3c8b5f1e2d7c6a9b0f3e8d4c1a2b5f7e9d0c3a6b8f1e2d4c7a"}
+  ]
+}

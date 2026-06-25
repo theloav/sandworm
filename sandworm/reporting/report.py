@@ -89,6 +89,12 @@ _TEMPLATE = """<!DOCTYPE html>
  .r-Low{background:#23863622;border:1px solid #238636;color:#7ee787}
  .mat{display:inline-block;font-size:11px;margin-right:6px;padding:1px 6px;border-radius:5px;border:1px solid var(--line)}
  .mat-on{color:#7ee787;border-color:#238636}.mat-off{color:#8b949e}
+ /* runtime placeholders + process tree */
+ .ph{background:repeating-linear-gradient(45deg,#161b22,#161b22 10px,#171d27 10px,#171d27 20px);border:1px dashed #30363d;color:#8b949e}
+ .ph .v{color:#8b949e}
+ .tree{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow:auto}
+ .tree .row{white-space:pre;line-height:1.7}
+ .tree .pname{color:#7ee787}.tree .ppid{color:var(--mut)}.tree .cmd{color:#79c0ff}
  details{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:6px 12px;margin-top:8px}
  details>summary{cursor:pointer;color:var(--fg2);font-size:13px;padding:6px 0;user-select:none}
  details[open]>summary{border-bottom:1px solid var(--line);margin-bottom:8px}
@@ -116,7 +122,7 @@ _TEMPLATE = """<!DOCTYPE html>
  </div>
 </div></div>
 <nav><div class="inner">
- <a href="#summary">Summary</a><a href="#lifecycle">Lifecycle</a><a href="#graph">Reasoning graph</a>
+ <a href="#summary">Summary</a><a href="#lifecycle">Lifecycle</a><a href="#runtime">Runtime</a><a href="#graph">Reasoning graph</a>
  {% if layers %}<a href="#deobf">Deobfuscation</a>{% endif %}<a href="#attack">ATT&amp;CK</a>
  <a href="#findings">Findings</a><a href="#differential">Differential</a><a href="#iocs">IOCs</a><a href="#coverage">Coverage</a>
  <a href="#detections">Detections</a><a href="#assessment">Assessment</a><a href="#appendix">Evidence</a>
@@ -127,8 +133,10 @@ _TEMPLATE = """<!DOCTYPE html>
  <h2>Executive summary</h2>
  {% if summary.family_hint != 'unknown' %}
  <div class="banner">Suspected family: <b>{{ summary.family_hint }}</b>
-   (static fingerprint similarity {{ '%.0f'|format(summary.family_confidence*100) }}%)
-   — matched markers: {% for mk in summary.family_markers %}<span class="pill">{{ mk }}</span>{% endfor %}
+   — <b>static similarity {{ '%.0f'|format(summary.family_confidence*100) }}%</b>
+   · attribution confidence: <b>{{ summary.family_confidence_label }}</b>
+   <span class="muted">({{ summary.family_basis }})</span><br>
+   matched markers: {% for mk in summary.family_markers %}<span class="pill">{{ mk }}</span>{% endfor %}
    <table style="max-width:560px;margin-top:8px"><tr><th>Attribution dimension</th><th>Status</th></tr>
    {% for dim, status in summary.family_components %}<tr><td>{{ dim }}</td><td class="muted">{{ status }}</td></tr>{% endfor %}</table>
    <span class="muted">Similarity is from static markers only — not a confirmed/behavioral attribution.</span></div>
@@ -137,13 +145,16 @@ _TEMPLATE = """<!DOCTYPE html>
   <div class="card"><div class="k">Risk</div><div class="v">{{ risk_pill(summary.risk)|safe }}</div></div>
   <div class="card"><div class="k">Maliciousness</div><div class="v">{{ summary.maliciousness_score }}<span class="muted">/100</span>
      <div class="bar" style="margin-top:5px"><span style="width:{{ summary.maliciousness_score }}%"></span></div></div></div>
-  <div class="card"><div class="k">Family</div><div class="v">{{ summary.family_hint }}{% if summary.family_hint != 'unknown' %} <span class="muted">({{ '%.0f'|format(summary.family_confidence*100) }}%)</span>{% endif %}</div></div>
+  <div class="card"><div class="k">Family</div><div class="v">{{ summary.family_hint }}{% if summary.family_hint != 'unknown' %} <span class="muted">({{ '%.0f'|format(summary.family_confidence*100) }}% static · {{ summary.family_confidence_label }})</span>{% endif %}</div></div>
   <div class="card"><div class="k">Primary capability</div><div class="v">{{ summary.primary_capability }}</div></div>
   <div class="card"><div class="k">Evidence maturity</div><div class="v">{% for lane, state in summary.evidence_maturity %}<span class="mat {{ 'mat-on' if state=='complete' else 'mat-off' }}">{{ '✓' if state=='complete' else '⏳' }} {{ lane }}</span>{% endfor %}</div></div>
   <div class="card"><div class="k">Highest inferred phase</div><div class="v">{{ summary.highest_inferred_phase }} <span class="muted">(static)</span></div></div>
   <div class="card"><div class="k">ATT&amp;CK techniques</div><div class="v">{{ summary.technique_count }} <span class="muted">({{ summary.network_indicator_count }} net IOC)</span></div></div>
  </div>
  <p class="muted" style="margin-top:10px"><b>Evidence breakdown:</b> {% for label, n in evidence_classes %}<span class="pill">{{ label }} {{ n }}</span>{% endfor %}</p>
+ <p class="muted"><b>Evidence weight:</b>
+   {% for label, n, hint in evidence_weights %}<span class="pill" title="{{ hint }}">{{ label }} {{ n }}</span>{% endfor %}
+   <span class="muted">— a high raw count is mostly weak strings; the verdict rests on the <b>Strong</b> signals.</span></p>
 </section>
 
 <section id="lifecycle">
@@ -166,10 +177,36 @@ _TEMPLATE = """<!DOCTYPE html>
  </table>
 </section>
 
+<section id="runtime">
+ <h2>Runtime behaviour {% if not runtime.observed %}<span class="muted">— pending</span>{% endif %}</h2>
+ {% if runtime.observed %}
+ <p class="muted">Observed during detonation / recovered from memory. These are <b>real events</b> (standing: observed), which upgrade the matching ATT&amp;CK techniques from inferred → observed.</p>
+ <h3>Process tree</h3>
+ {% if proc_tree %}
+ <div class="tree">{% for n in proc_tree %}<div class="row">{{ n.indent }}<span class="pname">{{ n.name }}</span> <span class="ppid">(pid {{ n.pid }})</span>{% if n.command_line %}  <span class="cmd">{{ n.command_line }}</span>{% endif %}</div>{% endfor %}</div>
+ {% else %}<p class="muted">No process-spawn events in the recovered evidence.</p>{% endif %}
+ <div class="summary" style="margin-top:12px">
+  <div class="card"><div class="k">Network</div><div class="v">{% if runtime.network %}{% for h in runtime.network %}<span class="pill">{{ h }}</span>{% endfor %}{% else %}<span class="muted">none</span>{% endif %}</div></div>
+  <div class="card"><div class="k">Dropped files</div><div class="v">{% if runtime.files %}{% for f in runtime.files %}<span class="pill">{{ f }}</span>{% endfor %}{% else %}<span class="muted">none</span>{% endif %}</div></div>
+  <div class="card"><div class="k">Registry writes</div><div class="v">{% if runtime.registry %}{% for r in runtime.registry %}<span class="pill">{{ r }}</span>{% endfor %}{% else %}<span class="muted">none</span>{% endif %}</div></div>
+  <div class="card"><div class="k">Injected regions (memory)</div><div class="v">{% if runtime.injected %}{% for i in runtime.injected %}<span class="pill">{{ i }}</span>{% endfor %}{% else %}<span class="muted">none</span>{% endif %}</div></div>
+ </div>
+ {% else %}
+ <p class="muted">No runtime evidence for this run. The sample was not detonated (isolation not verified) and no recorded report was ingested, so these views are <b>pending</b>. They populate automatically once a dynamic/memory report is available — the section layout does not change, the cards simply fill in.</p>
+ <div class="summary">
+  <div class="card ph"><div class="k">⏳ Process tree</div><div class="v">Pending — requires detonation / CAPE report</div></div>
+  <div class="card ph"><div class="k">⏳ Runtime behaviour</div><div class="v">Pending — API calls, network, dropped files</div></div>
+  <div class="card ph"><div class="k">⏳ Memory analysis</div><div class="v">Pending — injected regions, hidden processes</div></div>
+ </div>
+ <p class="hint">ℹ️ Provide a recorded report offline: <code>sandworm analyze sample --cape-report report.json --memory-report mem.json</code> (replay ingests prior evidence; it is not a live detonation). Or detonate inside a verified isolated environment.</p>
+ {% endif %}
+</section>
+
 <section id="graph">
  <h2>Reasoning graph</h2>
  <div class="muted">{{ graph_stats }}</div>
  <p class="hint">💡 Click any node to trace its reasoning chain (Sample → Indicator → Capability → ATT&amp;CK → Detection). Click empty space to reset.</p>
+ <p class="muted" style="margin:2px 0 8px">{% for color, label in graph_legend %}<span style="display:inline-block;margin-right:12px"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:{{ color }};margin-right:5px;vertical-align:middle"></span>{{ label }}</span>{% endfor %}</p>
  {{ graph_svg|safe }}
  <script>
  (function(){
@@ -452,8 +489,11 @@ def _evidence_classes(store: EvidenceStore, mappings) -> list[tuple[str, int]]:
     return [(label, n) for label, n in classes if n]
 
 
-def _detection_readiness(coverage, iocs) -> tuple[str, list[tuple[str, bool]]]:
-    """Can a SOC actually detect this sample, and with what? Returns (level, rows)."""
+def _detection_readiness(coverage, iocs, runtime) -> tuple[str, list[tuple[str, bool]]]:
+    """Can a SOC actually detect this sample, and with what? Returns (level, rows).
+
+    The matrix the reviewer asked for: YARA / Sigma-IOC / Sigma-behaviour /
+    Network / Memory — each a concrete ✓ or ✗ a SOC can act on."""
     inv = coverage.inventory
     has_net = any(getattr(i, "kind", "") in {"url", "domain", "ipv4"} for i in iocs)
     rows = [
@@ -461,11 +501,38 @@ def _detection_readiness(coverage, iocs) -> tuple[str, list[tuple[str, bool]]]:
         ("Sigma (IOC)", inv.ioc_rules > 0),
         ("Sigma (behavioural)", inv.behavioral_rules > 0),
         ("Network IOC", has_net),
-        ("Runtime/behaviour", inv.runtime_rules > 0),
+        ("Memory / runtime", bool(getattr(runtime, "observed", False)) or inv.runtime_rules > 0),
     ]
     score = sum(1 for _, ok in rows if ok)
     level = "High" if (inv.behavioral_rules and inv.yara_rules) else "Medium" if score >= 2 else "Low" if score else "None"
     return level, rows
+
+
+def _evidence_weights(store: EvidenceStore, mappings) -> list[tuple[str, int, str]]:
+    """Weight evidence Strong/Medium/Weak so a high raw count (e.g. 30 items) is
+    not mistaken for 30 strong signals. Strong = runtime-observed, a capability, a
+    sink, or anything backing an ATT&CK mapping; Medium = imports/symbols/decoded
+    layers; Weak = loose strings / benign library artifacts."""
+    mapped_ids = {eid for m in mappings for eid in m.evidence_ids}
+    strong = medium = weak = 0
+    for it in store:
+        o, d = it.object, it.details
+        if o.get("status") == "skipped":
+            continue
+        if d.get("library_artifact"):
+            weak += 1
+        elif it.source.startswith(("dynamic.", "memory.")) or o.get("capability") or o.get("sink") \
+                or o.get("verdict") or it.id in mapped_ids:
+            strong += 1
+        elif o.get("import") or o.get("symbol") or it.operation == "decode" or d.get("ioc"):
+            medium += 1
+        else:
+            weak += 1
+    return [
+        ("Strong", strong, "mapped to ATT&CK / observed / capability / sink"),
+        ("Medium", medium, "imports, decoded layers, IOC atoms"),
+        ("Weak", weak, "loose strings, benign toolchain artifacts"),
+    ]
 
 
 def _collect_differential(store: EvidenceStore):
@@ -494,11 +561,22 @@ def _collect_differential(store: EvidenceStore):
 _TIER = {"Sample": 0, "Module": 1, "File": 1, "Host": 1, "Registry": 1, "Macro": 1,
          "String": 1, "ApiCall": 1, "Process": 1, "Capability": 2, "Technique": 3, "Detection": 4}
 _TIER_LABELS = ["Sample", "Indicators", "Capability", "ATT&CK", "Detection"]
+# Colour reads left→right as the reasoning chain: Sample (amber) → Indicators
+# (blue, with network hosts in red since C2 is the highest-signal indicator) →
+# Capability (purple) → ATT&CK (orange) → Detection (green).
+_IND_BLUE = "#58a6ff"
 _COLORS = {
-    "Sample": "#e3b341", "Process": "#f0883e", "File": "#58a6ff", "Registry": "#bc8cff",
-    "Host": "#f85149", "Module": "#3fb950", "Macro": "#d29922", "ApiCall": "#79c0ff",
-    "String": "#8b949e", "Capability": "#ff7b72", "Technique": "#7ee787", "Detection": "#d2a8ff",
+    "Sample": "#e3b341",
+    "Process": _IND_BLUE, "File": _IND_BLUE, "Registry": _IND_BLUE, "Module": _IND_BLUE,
+    "Macro": _IND_BLUE, "ApiCall": _IND_BLUE, "String": _IND_BLUE,
+    "Host": "#f85149",
+    "Capability": "#bc8cff", "Technique": "#f0883e", "Detection": "#3fb950",
 }
+# (swatch colour, label) legend rendered under the graph.
+_GRAPH_LEGEND = [
+    ("#e3b341", "Sample"), (_IND_BLUE, "Indicator"), ("#f85149", "Network / C2"),
+    ("#bc8cff", "Capability"), ("#f0883e", "ATT&CK technique"), ("#3fb950", "Detection"),
+]
 
 
 def _graph_svg(graph, max_per_tier: int = 12) -> tuple[str, str]:
@@ -639,8 +717,21 @@ def render_html(inp: ReportInputs) -> str:
     iocs = _collect_iocs(inp.store)
     library = _collect_library(inp.store)
     differential = _collect_differential(inp.store)
+    from ..reconstruct.runtime import build_runtime_view
+
+    runtime = build_runtime_view(inp.store)
+    proc_tree = [
+        type("PT", (), {
+            "name": escape(n.name),
+            "pid": escape(n.pid),
+            "command_line": escape(n.command_line[:80]),
+            "indent": ("│  " * (n.depth - 1) + "└─ ") if n.depth else "",
+        })
+        for n in runtime.flatten()
+    ]
     evidence_classes = _evidence_classes(inp.store, inp.mappings)
-    readiness_level, readiness_rows = _detection_readiness(inp.coverage, iocs)
+    evidence_weights = _evidence_weights(inp.store, inp.mappings)
+    readiness_level, readiness_rows = _detection_readiness(inp.coverage, iocs, runtime)
     graph_svg, graph_stats = _graph_svg(inp.graph)
     isolated = inp.isolation.startswith("verified")
     summary = build_summary(inp.store, inp.mappings, inp.phases, isolated=isolated)
@@ -665,6 +756,10 @@ def render_html(inp: ReportInputs) -> str:
         library=library,
         differential=differential,
         evidence_classes=evidence_classes,
+        evidence_weights=evidence_weights,
+        runtime=runtime,
+        proc_tree=proc_tree,
+        graph_legend=_GRAPH_LEGEND,
         readiness_level=readiness_level,
         readiness_rows=readiness_rows,
         yara=inp.yara,

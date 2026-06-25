@@ -1,0 +1,23 @@
+[
+  {
+    "_comment": "SYNTHETIC recorded volatility3 report for offline demo of the SANDWORM memory lane. Shaped as the operator-captured JSON our normalizer ingests: [{plugin, rows}, ...]. malfind rows carry an injected RWX region in the process the loader hollowed, corroborating T1055 from memory.",
+    "plugin": "windows.pslist.PsList",
+    "rows": [
+      {"PID": 1200, "PPID": 900, "ImageFileName": "explorer.exe"},
+      {"PID": 1840, "PPID": 1200, "ImageFileName": "loader.exe"},
+      {"PID": 2604, "PPID": 1840, "ImageFileName": "notepad.exe"}
+    ]
+  },
+  {
+    "plugin": "windows.malfind.Malfind",
+    "rows": [
+      {"PID": 2604, "Process": "notepad.exe", "Protection": "PAGE_EXECUTE_READWRITE", "Notes": "MZ header in private RWX region (no backing file)"}
+    ]
+  },
+  {
+    "plugin": "windows.netscan.NetScan",
+    "rows": [
+      {"PID": 1840, "Proto": "TCPv4", "ForeignAddr": "185.234.218.42", "ForeignPort": 443, "State": "ESTABLISHED"}
+    ]
+  }
+]

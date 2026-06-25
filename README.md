@@ -36,6 +36,13 @@ sandworm analyze samples/synthetic/benign_webshell.php
 #   a confidence and a "why"), clean-tested YARA + Sigma, and a coverage score.
 sandworm ask "what execution sinks were found?"      # graph-grounded copilot
 sandworm plugins --dir plugins_example               # list analyzers + plugins
+
+# Dynamic + memory lanes via offline replay of recorded reports (no live
+# detonation — ingests prior evidence, so it runs without the isolation gate and
+# upgrades the matching ATT&CK techniques from inferred → observed):
+sandworm analyze samples/synthetic/benign_dropper.sh \
+  --cape-report samples/synthetic/recorded_cape_report.json \
+  --memory-report samples/synthetic/recorded_vol3_report.json
 ```
 
 ## The architectural spine: an Evidence Layer

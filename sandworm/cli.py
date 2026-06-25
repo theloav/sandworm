@@ -30,6 +30,8 @@ def analyze(
     sample_path: str = typer.Argument(..., help="Path to the sample to analyze."),
     out: str = typer.Option("", "--out", "-o", help="HTML report output path."),
     no_dynamic: bool = typer.Option(False, "--no-dynamic", help="Skip the dynamic lane entirely."),
+    cape_report: str = typer.Option("", "--cape-report", help="Ingest a recorded CAPE/DRAKVUF JSON report (offline replay; not a live detonation)."),
+    memory_report: str = typer.Option("", "--memory-report", help="Ingest a recorded volatility3 JSON report (offline replay)."),
     store_sample: bool = typer.Option(False, "--store", help="Defang+store the sample encrypted-at-rest."),
 ):
     """Analyze a sample end-to-end and write an HTML report."""
@@ -38,11 +40,18 @@ def analyze(
     if not p.exists():
         typer.secho(f"sample not found: {sample_path}", fg=typer.colors.RED)
         raise typer.Exit(1)
+    for label, val in (("--cape-report", cape_report), ("--memory-report", memory_report)):
+        if val and not Path(val).exists():
+            typer.secho(f"{label} not found: {val}", fg=typer.colors.RED)
+            raise typer.Exit(1)
     sample = Sample.from_path(p)
     if store_sample:
         SampleStore(cfg).store(sample)
 
-    result = analyze_sample(sample, config=cfg, enable_dynamic=not no_dynamic)
+    result = analyze_sample(
+        sample, config=cfg, enable_dynamic=not no_dynamic,
+        cape_report=cape_report or None, memory_report=memory_report or None,
+    )
     run_dir = persist_run(result, cfg)
 
     typer.secho(f"run {result.run_id}  format={result.triage.fmt}  isolated={result.isolated}", fg=typer.colors.CYAN)
