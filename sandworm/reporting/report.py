@@ -81,6 +81,8 @@ _TEMPLATE = """<!DOCTYPE html>
  .r-High{background:#db6d2822;border:1px solid #db6d28;color:#f0883e}
  .r-Medium{background:#9e6a0322;border:1px solid #d29922;color:#e3b341}
  .r-Low{background:#23863622;border:1px solid #238636;color:#7ee787}
+ .mat{display:inline-block;font-size:11px;margin-right:6px;padding:1px 6px;border-radius:5px;border:1px solid var(--line)}
+ .mat-on{color:#7ee787;border-color:#238636}.mat-off{color:#8b949e}
  details{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:6px 12px;margin-top:8px}
  details>summary{cursor:pointer;color:var(--fg2);font-size:13px;padding:6px 0;user-select:none}
  details[open]>summary{border-bottom:1px solid var(--line);margin-bottom:8px}
@@ -101,8 +103,8 @@ _TEMPLATE = """<!DOCTYPE html>
   <div class="promise">Given a sample, reconstruct what happened, explain why, and emit detections.</div>
  </div>
  <div class="riskbox">
-  <div class="lbl">Risk</div>
-  <div style="margin:5px 0">{{ risk_pill(summary.risk)|safe }}</div>
+  <div class="lbl">Risk · Score</div>
+  <div style="margin:5px 0">{{ risk_pill(summary.risk)|safe }} <b>{{ summary.maliciousness_score }}</b><span class="muted">/100</span></div>
   <div class="muted">{{ summary.family_hint if summary.family_hint!='unknown' else fmt|upper }} · exec {{ 'Yes' if summary.execution_confirmed else 'No' }}</div>
  </div>
 </div></div>
@@ -124,11 +126,11 @@ _TEMPLATE = """<!DOCTYPE html>
  {% endif %}
  <div class="summary">
   <div class="card"><div class="k">Risk</div><div class="v">{{ risk_pill(summary.risk)|safe }}</div></div>
-  <div class="card"><div class="k">Likelihood malicious</div><div class="v">{{ summary.likelihood }}</div></div>
-  <div class="card"><div class="k">Execution confirmed</div><div class="v">{{ 'Yes' if summary.execution_confirmed else 'No' }}</div></div>
+  <div class="card"><div class="k">Maliciousness</div><div class="v">{{ summary.maliciousness_score }}<span class="muted">/100</span>
+     <div class="bar" style="margin-top:5px"><span style="width:{{ summary.maliciousness_score }}%"></span></div></div></div>
   <div class="card"><div class="k">Family</div><div class="v">{{ summary.family_hint }}{% if summary.family_hint != 'unknown' %} <span class="muted">({{ '%.0f'|format(summary.family_confidence*100) }}%)</span>{% endif %}</div></div>
   <div class="card"><div class="k">Primary capability</div><div class="v">{{ summary.primary_capability }}</div></div>
-  <div class="card"><div class="k">Analysis mode</div><div class="v">{{ summary.analysis_mode }}</div></div>
+  <div class="card"><div class="k">Evidence maturity</div><div class="v">{% for lane, state in summary.evidence_maturity %}<span class="mat {{ 'mat-on' if state=='complete' else 'mat-off' }}">{{ '✓' if state=='complete' else '⏳' }} {{ lane }}</span>{% endfor %}</div></div>
   <div class="card"><div class="k">Highest inferred phase</div><div class="v">{{ summary.highest_inferred_phase }} <span class="muted">(static)</span></div></div>
   <div class="card"><div class="k">ATT&amp;CK techniques</div><div class="v">{{ summary.technique_count }} <span class="muted">({{ summary.network_indicator_count }} net IOC)</span></div></div>
  </div>
@@ -239,7 +241,13 @@ _TEMPLATE = """<!DOCTYPE html>
      <td class="{{ conf_class(i.confidence) }}">{{ '%.2f'|format(i.confidence) }}</td>
      <td>{{ i.fp_risk }}</td></tr>
  {% endfor %}</table>
- {% else %}<p class="muted">No IOCs extracted.</p>{% endif %}
+ {% else %}<p class="muted">No network IOCs extracted.</p>{% endif %}
+ {% if library %}
+ <details><summary>{{ library|length }} library / toolchain artifact(s) — benign, excluded from IOCs &amp; C2</summary>
+  <p class="muted">Compiler/SDK/registry references (e.g. Go modules, package hosts). Surfaced for context; they are <b>not</b> C2 infrastructure.</p>
+  {% for l in library %}<span class="pill">{{ l }}</span>{% endfor %}
+ </details>
+ {% endif %}
 </section>
 
 <section id="coverage">
@@ -279,8 +287,16 @@ _TEMPLATE = """<!DOCTYPE html>
  <div class="summary">
   <div class="card"><div class="k">Risk</div><div class="v">{{ risk_pill(summary.risk)|safe }}</div></div>
   <div class="card"><div class="k">Likelihood</div><div class="v">{{ summary.likelihood }}</div></div>
+  <div class="card"><div class="k">Maliciousness score</div><div class="v">{{ summary.maliciousness_score }}/100</div></div>
   <div class="card"><div class="k">Execution confirmed</div><div class="v">{{ 'Yes' if summary.execution_confirmed else 'No' }}</div></div>
  </div>
+ <p><b>Score breakdown:</b></p>
+ <table style="max-width:520px"><tr><th>Factor</th><th>Points</th></tr>
+ {% for label, pts in summary.score_factors %}
+ <tr><td>{{ label }}</td><td class="{{ 'reached' if pts>=0 else 'hi' }}">{{ '+' if pts>=0 else '' }}{{ pts }}</td></tr>
+ {% endfor %}
+ <tr><td><b>Total</b></td><td><b>{{ summary.maliciousness_score }}/100</b></td></tr>
+ </table>
  <p><b>Rationale:</b></p>
  <ul>{% for r in summary.risk_reasons %}<li>{{ r }}</li>{% endfor %}</ul>
  <div class="banner">{{ assessment|safe }}</div>
@@ -361,6 +377,12 @@ def _collect_iocs(store: EvidenceStore):
                 })
             )
     return out
+
+
+def _collect_library(store: EvidenceStore):
+    """Benign toolchain/SDK references, kept OUT of the IOC list (reviewer ask:
+    separate library artifacts from network IOCs)."""
+    return [escape(str(it.object.get("library_artifact"))) for it in store if it.details.get("library_artifact")]
 
 
 # Reasoning-graph tiers: read left → right as Sample → evidence-entity →
@@ -512,6 +534,7 @@ def render_html(inp: ReportInputs) -> str:
     tmpl = env.from_string(_TEMPLATE)
     layers, final_payload = _collect_layers(inp.store)
     iocs = _collect_iocs(inp.store)
+    library = _collect_library(inp.store)
     graph_svg, graph_stats = _graph_svg(inp.graph)
     isolated = inp.isolation.startswith("verified")
     summary = build_summary(inp.store, inp.mappings, inp.phases, isolated=isolated)
@@ -532,6 +555,7 @@ def render_html(inp: ReportInputs) -> str:
         layers=layers,
         final_payload=final_payload,
         iocs=iocs,
+        library=library,
         yara=inp.yara,
         sigma=inp.sigma,
         coverage=inp.coverage,

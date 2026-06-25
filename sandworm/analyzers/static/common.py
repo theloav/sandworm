@@ -28,17 +28,91 @@ _IOC_PATTERNS = {
         "high",  # bare domains match many benign strings (e.g. example.com, *.dll-ish)
     ),
     "ipv4": (
-        re.compile(r"\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b"),
+        # Lookarounds reject ASN.1 OID fragments (`1.3.6.1`, `2.5.4.102`) and the
+        # middles of longer dotted-number runs — those are NOT IP addresses.
+        re.compile(r"(?<![\d.])(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)(?![\d.])"),
         0.6,
         "medium",
     ),
     "email": (re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"), 0.6, "medium"),
-    "md5": (re.compile(r"\b[a-fA-F0-9]{32}\b"), 0.4, "high"),
-    "sha256": (re.compile(r"\b[a-fA-F0-9]{64}\b"), 0.5, "medium"),
+    # Hashes: real ones from tooling are lowercase hex AND contain at least one
+    # a-f letter. This rejects 32/64-digit decimal numbers and uppercase table
+    # data (`28421709...`, `B10B11B12...`) that are not hashes.
+    "md5": (re.compile(r"\b(?=[0-9a-f]*[a-f])[0-9a-f]{32}\b"), 0.4, "high"),
+    "sha256": (re.compile(r"\b(?=[0-9a-f]*[a-f])[0-9a-f]{64}\b"), 0.5, "medium"),
 }
 
 # Domains we never want to surface as malicious IOCs.
 _DOMAIN_ALLOWLIST = {"example.com", "example.org", "localhost", "schemas.microsoft.com", "w3.org"}
+
+# Benign toolchain / SDK / hosting domains that legitimately appear compiled into
+# binaries (Go modules, package registries). These are real domains but are
+# *library artifacts*, not C2 — surfaced separately, never as network IOCs.
+_LIBRARY_DOMAINS = frozenset(
+    """
+    golang.org go.dev pkg.go.dev gopkg.in google.com googleapis.com gstatic.com
+    github.com githubusercontent.com gitlab.com bitbucket.org sourceforge.net
+    microsoft.com windows.com live.com office.com msftncsi.com
+    cloudflare.com amazonaws.com azure.com digicert.com verisign.com sectigo.com
+    letsencrypt.org mozilla.org apache.org python.org rust-lang.org crates.io
+    npmjs.com nodejs.org openssl.org curl.se zlib.net intel.com
+    """.split()
+)
+
+# Go standard-library / runtime package names. Go binaries embed thousands of
+# `package.Symbol` / `package.Type.Method` strings whose tail matches a real TLD
+# (`runtime.name`, `reflect.name`, `idna.info`, `hash.net`). If the leading label
+# is one of these, the "domain" is a Go symbol, not a host.
+_STDLIB_PKGS = frozenset(
+    """
+    runtime reflect reflectlite unicode sync atomic hash rand asn1 pkix big idna
+    service syscall math time sort bytes strings strconv errors fmt os io bufio
+    net http tls x509 json xml base64 hex gzip zlib flate tar zip regexp bits
+    cpu poll unix windows itab go type internal context crypto cipher elliptic
+    sha256 sha512 md5 hmac rsa ecdsa ed25519 pem utf8 utf16 url cookiejar textproto
+    """.split()
+)
+
+
+def _registrable(domain: str) -> str:
+    """Best-effort registrable domain (last two labels)."""
+    labels = domain.lower().split(".")
+    return ".".join(labels[-2:]) if len(labels) >= 2 else domain.lower()
+
+
+def classify_domain(val: str) -> str:
+    """Classify a candidate domain: 'drop' (noise), 'library' (benign toolchain),
+    or 'ioc' (treat as a real network indicator)."""
+    labels = val.split(".")
+    # Canonical hostnames are case-insensitive but effectively lowercase; an
+    # uppercase letter signals a code symbol (pkix.Name, reflect.Value.Int).
+    if any(c.isupper() for c in val):
+        return "drop"
+    if labels[-1].lower() not in _COMMON_TLDS:
+        return "drop"
+    # Leading label is a Go stdlib/runtime package -> it's a symbol, not a host.
+    if labels[0] in _STDLIB_PKGS or (len(labels) >= 2 and labels[-2] in _STDLIB_PKGS):
+        return "drop"
+    # Second-level label must be >=3 chars (kills `<stray>.<ccTLD>` fragments).
+    if len(labels[-2]) < 3:
+        return "drop"
+    if val.lower() in _DOMAIN_ALLOWLIST:
+        return "drop"
+    if _registrable(val) in _LIBRARY_DOMAINS or val.lower() in _LIBRARY_DOMAINS:
+        return "library"
+    return "ioc"
+
+
+def _valid_url(url: str) -> bool:
+    """A URL is only an IOC if its host is a real hostname (has a dot + known TLD)
+    or an IP. Rejects binary garbage like `https://L)` / `https://H`."""
+    host = re.sub(r"^[a-z]+://", "", url, flags=re.I).split("/")[0].split("?")[0].split(":")[0]
+    if re.fullmatch(r"(?:\d{1,3}\.){3}\d{1,3}", host):
+        return True
+    if "." not in host:
+        return False
+    tld = host.rsplit(".", 1)[-1].lower()
+    return tld in _COMMON_TLDS and classify_domain(host) != "drop"
 
 # Real public TLDs. The bare-domain regex otherwise matches JavaScript member
 # access (`document.getElementById`, `a.onclick`), object paths (`d.msg`), and
@@ -90,6 +164,10 @@ def _is_routable_ipv4(val: str) -> bool:
     # x.0.0.0 / x.255.255.255 look like version strings or broadcast, not hosts
     if (b, c, d) in {(0, 0, 0), (255, 255, 255)}:
         return False
+    # Standard ASN.1 OID root arcs (`1.2.*`, `1.3.*`, `2.5.*`, `2.16.*`, `0.*`)
+    # are pervasive in crypto/x509 code and are NOT IP addresses.
+    if (a, b) in {(1, 2), (1, 3), (2, 5), (2, 16)} or a == 0:
+        return False
     if a in (0, 10, 127) or a >= 224:  # this-net, RFC1918-10, loopback, multicast/reserved
         return False
     if a == 169 and b == 254:  # link-local
@@ -102,35 +180,37 @@ def _is_routable_ipv4(val: str) -> bool:
 
 
 def extract_iocs(text: str) -> list[tuple[str, str, float, str]]:
-    """Return (kind, value, confidence, fp_risk)."""
-    out: list[tuple[str, str, float, str]] = []
+    """Return (kind, value, confidence, fp_risk) — network/host IOCs only.
+
+    Library/toolchain artifacts (golang.org, github.com, …) and noise (Go symbol
+    paths, ASN.1 OIDs, non-hashes) are filtered out here; use
+    :func:`extract_iocs_classified` if you also want the library artifacts.
+    """
+    return [(k, v, c, f) for k, v, c, f, cat in extract_iocs_classified(text) if cat == "ioc"]
+
+
+def extract_iocs_classified(text: str) -> list[tuple[str, str, float, str, str]]:
+    """Like :func:`extract_iocs` but each item carries a category:
+    'ioc' (real network indicator) or 'library' (benign toolchain artifact)."""
+    out: list[tuple[str, str, float, str, str]] = []
     seen: set[tuple[str, str]] = set()
     # collect URLs/domains first to suppress domain duplicates of URL hosts
     url_hosts: set[str] = set()
     for m in _IOC_PATTERNS["url"][0].finditer(text):
-        try:
+        if _valid_url(m.group()):
             host = re.sub(r"^https?://", "", m.group(), flags=re.I).split("/")[0].split(":")[0]
             url_hosts.add(host.lower())
-        except Exception:
-            pass
     for kind, (pat, conf, fp) in _IOC_PATTERNS.items():
         for m in pat.finditer(text):
             val = m.group()
+            category = "ioc"
+            if kind == "url" and not _valid_url(val):
+                continue
             if kind == "domain":
-                labels = val.split(".")
-                # Must end in a real public TLD — rejects JS member access
-                # (`a.onclick`), object paths (`d.msg`), and filenames (`x.jpg`).
-                if labels[-1].lower() not in _COMMON_TLDS:
-                    continue
-                # The second-level label must be >=3 chars. This kills the
-                # `<garbage>.<ccTLD>` fragments scraped out of a TLD/country table
-                # embedded in a binary (`M.Co`, `ax.iD`, `7.HK`, `g.RO`, ...),
-                # which are real TLDs preceded by one or two stray characters.
-                # Trade-off: drops a few legit 1-2 char domains (t.co); acceptable
-                # for malware IOC extraction. URL hosts are exempt (kept below).
-                if len(labels[-2]) < 3 and val.lower() not in url_hosts:
-                    continue
-                if val.lower() in _DOMAIN_ALLOWLIST or val.lower() in url_hosts:
+                if val.lower() in url_hosts:
+                    continue  # already covered by the URL
+                category = classify_domain(val)
+                if category == "drop":
                     continue
             if kind == "ipv4" and not _is_routable_ipv4(val):
                 continue
@@ -138,7 +218,7 @@ def extract_iocs(text: str) -> list[tuple[str, str, float, str]]:
             if key in seen:
                 continue
             seen.add(key)
-            out.append((kind, val, conf, fp))
+            out.append((kind, val, conf, fp, category))
     return out
 
 
@@ -231,7 +311,24 @@ class CommonAnalyzer(BaseAnalyzer):
         # mojibake onto the WannaCry killswitch URL).
         binary_like = (sample.format_hint or "") in {"pe", "elf", "macho", "office", "generic"}
         text_for_ioc = "\n".join(strings) if (binary_like or sample.size >= 5_000_000) else sample.text
-        for kind, val, conf, fp in extract_iocs(text_for_ioc):
+        for kind, val, conf, fp, category in extract_iocs_classified(text_for_ioc):
+            if category == "library":
+                # Benign toolchain/SDK domain (e.g. golang.org, github.com). Record
+                # it as a library artifact, NOT a network IOC — so it never feeds
+                # the C2/T1071 mapping or inflates the indicator count.
+                items.append(
+                    ctx.ev(
+                        source="static.common",
+                        artifact="string",
+                        operation="read",
+                        subject={"analyzer": self.name},
+                        object={"library_artifact": val, "kind": kind},
+                        details={"library_artifact": True, "note": "benign toolchain/SDK reference, not C2"},
+                        confidence=0.25,
+                        evidence_refs=[ref],
+                    )
+                )
+                continue
             items.append(
                 ctx.ev(
                     source="static.common",

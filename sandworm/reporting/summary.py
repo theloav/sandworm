@@ -55,6 +55,9 @@ class ExecutiveSummary:
     risk: str                     # Critical | High | Medium | Low
     likelihood: str               # High | Medium | Low
     risk_reasons: list[str]
+    maliciousness_score: int                      # 0-100, explainable
+    score_factors: list[tuple[str, int]]          # (reason, +/- points)
+    evidence_maturity: list[tuple[str, str]]      # (lane, "complete"|"pending")
     technique_count: int
     network_indicator_count: int
     top_techniques: list[str] = field(default_factory=list)
@@ -149,6 +152,66 @@ def _risk(store: EvidenceStore, mappings: list[AttackMapping], summary_net: int,
     return risk, likelihood, reasons
 
 
+# Points each signal contributes to the 0-100 maliciousness score.
+_SCORE_WEIGHTS = {
+    "ransomware": 30,
+    "inhibit_recovery": 18,
+    "webshell": 25,
+    "injection": 20,
+    "exec_sinks": 16,
+    "family": 25,
+    "network": 8,
+    "upload": 8,
+}
+
+
+def _maliciousness(store: EvidenceStore, mappings: list[AttackMapping], net: int, family: str) -> tuple[int, list[tuple[str, int]]]:
+    factors: list[tuple[str, int]] = []
+    tids = {m.technique_id for m in mappings}
+    if _has_capability(store, "ransomware"):
+        factors.append(("Ransomware / encryption indicators", _SCORE_WEIGHTS["ransomware"]))
+    if _has_capability(store, "inhibit_recovery"):
+        factors.append(("Shadow-copy / backup deletion", _SCORE_WEIGHTS["inhibit_recovery"]))
+    if _has_verdict(store, "php_webshell"):
+        factors.append(("Web-shell heuristic matched", _SCORE_WEIGHTS["webshell"]))
+    if "T1055" in tids:
+        factors.append(("Process-injection primitives", _SCORE_WEIGHTS["injection"]))
+    n_sinks = _exec_sink_count(store)
+    if n_sinks >= 2:
+        factors.append((f"Multiple execution sinks ({n_sinks})", _SCORE_WEIGHTS["exec_sinks"]))
+    if family != "unknown":
+        factors.append((f"Static fingerprint match ({family})", _SCORE_WEIGHTS["family"]))
+    if net:
+        factors.append((f"Embedded network indicators ({net})", _SCORE_WEIGHTS["network"]))
+    if any(it.object.get("sink") in {"move_uploaded_file", "file_put_contents"} for it in store):
+        factors.append(("File upload / write capability", _SCORE_WEIGHTS["upload"]))
+
+    raw = sum(p for _, p in factors)
+    # Static analysis alone can never fully confirm malice -> cap below 100 and
+    # show the caveat as an explicit negative factor.
+    observed = any(provenance_observed(it) for it in store)
+    score = min(100 if observed else 96, raw)
+    if not observed and factors:
+        penalty = -min(4, max(1, raw - score)) if raw > score else -2
+        factors.append(("No runtime confirmation (static only)", penalty))
+        score = max(0, min(96, raw + penalty))
+    return score, factors
+
+
+def provenance_observed(it) -> bool:
+    return it.source.startswith(("dynamic.", "memory."))
+
+
+def _evidence_maturity(store: EvidenceStore) -> list[tuple[str, str]]:
+    has_dynamic = any(it.source.startswith("dynamic.") for it in store)
+    has_memory = any(it.source.startswith("memory.") for it in store)
+    return [
+        ("static", "complete"),
+        ("dynamic", "complete" if has_dynamic else "pending"),
+        ("memory", "complete" if has_memory else "pending"),
+    ]
+
+
 def build_summary(
     store: EvidenceStore,
     mappings: list[AttackMapping],
@@ -160,6 +223,8 @@ def build_summary(
     net = len([it for it in store if it.details.get("ioc") and it.object.get("kind") in {"url", "domain", "ipv4"}])
     top = [f"{m.technique_id} {m.technique_name}" for m in sorted(mappings, key=lambda m: -m.confidence)[:5]]
     risk, likelihood, reasons = _risk(store, mappings, net, family)
+    score, factors = _maliciousness(store, mappings, net, family)
+    maturity = _evidence_maturity(store)
     return ExecutiveSummary(
         analysis_mode="static + dynamic" if isolated else "static only",
         runtime_observed=runtime_observed(phases),
@@ -173,6 +238,9 @@ def build_summary(
         risk=risk,
         likelihood=likelihood,
         risk_reasons=reasons,
+        maliciousness_score=score,
+        score_factors=factors,
+        evidence_maturity=maturity,
         technique_count=len(mappings),
         network_indicator_count=net,
         top_techniques=top,
