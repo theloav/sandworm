@@ -153,22 +153,27 @@ def _risk(store: EvidenceStore, mappings: list[AttackMapping], summary_net: int,
     return risk, likelihood, reasons
 
 
-# Points each signal contributes to the 0-100 maliciousness score.
+# Points each signal contributes to the 0-100 maliciousness score. Calibrated so
+# that a single serious capability (injection / web shell / ransomware) lands a
+# sample firmly in the High band, and ransomware reaches Critical.
 _SCORE_WEIGHTS = {
-    "ransomware": 30,
-    "inhibit_recovery": 18,
-    "webshell": 25,
-    "injection": 20,
-    "exec_sinks": 16,
-    "family": 25,
-    "network": 8,
-    "upload": 8,
+    "malicious_technique": 12,  # base: at least one real ATT&CK technique mapped
+    "ransomware": 45,
+    "inhibit_recovery": 20,
+    "webshell": 40,
+    "injection": 35,
+    "exec_sinks": 18,
+    "family": 18,
+    "c2": 15,                   # network egress / C2 capability
+    "upload": 10,
 }
 
 
 def _maliciousness(store: EvidenceStore, mappings: list[AttackMapping], net: int, family: str) -> tuple[int, list[tuple[str, int]]]:
     factors: list[tuple[str, int]] = []
     tids = {m.technique_id for m in mappings}
+    if mappings:
+        factors.append(("Malicious ATT&CK technique(s) present", _SCORE_WEIGHTS["malicious_technique"]))
     if _has_capability(store, "ransomware"):
         factors.append(("Ransomware / encryption indicators", _SCORE_WEIGHTS["ransomware"]))
     if _has_capability(store, "inhibit_recovery"):
@@ -183,9 +188,14 @@ def _maliciousness(store: EvidenceStore, mappings: list[AttackMapping], net: int
     if family != "unknown":
         factors.append((f"Static fingerprint match ({family})", _SCORE_WEIGHTS["family"]))
     if net:
-        factors.append((f"Embedded network indicators ({net})", _SCORE_WEIGHTS["network"]))
+        factors.append((f"Network egress / C2 indicators ({net})", _SCORE_WEIGHTS["c2"]))
     if any(it.object.get("sink") in {"move_uploaded_file", "file_put_contents"} for it in store):
         factors.append(("File upload / write capability", _SCORE_WEIGHTS["upload"]))
+    # Breadth of corroborating evidence (capped) — more independent signals raise
+    # confidence in the verdict.
+    breadth = min(8, len(store) // 4)
+    if breadth:
+        factors.append((f"Breadth of corroborating evidence ({len(store)} items)", breadth))
 
     raw = sum(p for _, p in factors)
     # Static analysis alone can never fully confirm malice -> cap below 100 and
@@ -193,9 +203,8 @@ def _maliciousness(store: EvidenceStore, mappings: list[AttackMapping], net: int
     observed = any(provenance_observed(it) for it in store)
     score = min(100 if observed else 96, raw)
     if not observed and factors:
-        penalty = -min(4, max(1, raw - score)) if raw > score else -2
-        factors.append(("No runtime confirmation (static only)", penalty))
-        score = max(0, min(96, raw + penalty))
+        factors.append(("No runtime confirmation (static only)", -4))
+        score = max(0, min(96, raw - 4))
     return score, factors
 
 

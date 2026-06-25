@@ -80,6 +80,61 @@ def test_maliciousness_score_is_explainable():
     assert maturity["dynamic"] == "pending" and maturity["memory"] == "pending"
 
 
+def test_generic_decrypt_string_is_not_ransomware(temp_config):
+    # A backdoor with `decrypt` + `.crypt` (both weak/generic) must NOT be called
+    # ransomware — this was a dangerous false positive.
+    data = b"MZ" + b"\x00" * 64 + b"decrypt\x00.crypt\x00http://c2.evil.ru/g\x00"
+    sample = Sample.from_bytes("bd.bin", data)
+    sample.format_hint = "pe"
+    items = CommonAnalyzer().analyze(sample, Context(run_id="t", config=temp_config))
+    assert not any(i.object.get("capability") == "ransomware" for i in items)
+    tids = {m.technique_id for m in map_evidence(_store(items))}
+    assert "T1486" not in tids
+
+
+def test_strong_marker_is_ransomware(temp_config):
+    data = b"MZ" + b"\x00" * 64 + b".wnry\x00@WanaDecryptor@\x00your files have been encrypted\x00"
+    sample = Sample.from_bytes("wc.bin", data)
+    sample.format_hint = "pe"
+    items = CommonAnalyzer().analyze(sample, Context(run_id="t", config=temp_config))
+    assert any(i.object.get("capability") == "ransomware" for i in items)
+    assert "T1486" in {m.technique_id for m in map_evidence(_store(items))}
+
+
+def test_injection_scores_high_band(temp_config):
+    from sandworm.reconstruct.narrative import build_narrative
+    from sandworm.reporting.summary import build_summary
+
+    store = EvidenceStore()
+    for imp in ("WriteProcessMemory", "CreateRemoteThread", "VirtualAllocEx"):
+        store.append(EvidenceItem(run_id="r", source="static.pe", artifact="api_call", operation="resolve",
+                     subject={"a": "x"}, object={"import": imp}, details={"why": "x"}, confidence=0.7))
+    mappings = map_evidence(store)
+    summary = build_summary(store, mappings, build_narrative(mappings), isolated=False)
+    assert summary.risk == "High"
+    assert summary.maliciousness_score >= 40  # injection alone lands in the High band
+
+
+def _store(items):
+    s = EvidenceStore()
+    s.extend(items)
+    return s
+
+
+def test_coverage_detectable_flag():
+    from sandworm.detect.sigma_gen import generate_sigma
+    from sandworm.detect.yara_gen import YaraRule
+    from sandworm.reporting.coverage import compute_coverage
+
+    store = EvidenceStore()
+    store.append(EvidenceItem(run_id="r", source="static.pe", artifact="api_call", operation="resolve",
+                 subject={"a": "x"}, object={"import": "WriteProcessMemory"}, details={"why": "x"}, confidence=0.7))
+    mappings = map_evidence(store)
+    cov = compute_coverage(mappings, generate_sigma(store, mappings), [YaraRule(name="t", strings=[b"x"], condition_min=1)])
+    assert cov.detectable is True  # a YARA rule exists -> the sample IS detectable
+    # even if technique-level behavioural coverage is 0%, detectable stays True
+
+
 def test_dynamic_evidence_marks_maturity_complete():
     store = EvidenceStore()
     store.append(EvidenceItem(run_id="r", source="dynamic.php", artifact="api_call", operation="exec",

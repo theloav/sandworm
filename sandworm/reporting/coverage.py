@@ -43,6 +43,7 @@ class CoverageReport:
     observed_techniques: int = 0      # techniques confirmed by runtime/memory
     inferred_techniques: int = 0      # techniques supported only by static evidence
     runtime_coverage: float | None = None  # coverage of OBSERVED techniques; None when none observed
+    detectable: bool = False          # would ANY generated rule (YARA/Sigma) flag this sample?
 
     def to_dict(self) -> dict:
         return {
@@ -52,6 +53,7 @@ class CoverageReport:
             "observed_techniques": self.observed_techniques,
             "inferred_techniques": self.inferred_techniques,
             "runtime_coverage": self.runtime_coverage,
+            "detectable": self.detectable,
         }
 
 
@@ -123,4 +125,5 @@ def compute_coverage(
         observed_techniques=len(obs_ids),
         inferred_techniques=len(inf_ids),
         runtime_coverage=runtime_cov,
+        detectable=bool(yara_rules) or bool(sigma_rules),
     )

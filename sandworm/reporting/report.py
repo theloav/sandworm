@@ -269,8 +269,12 @@ _TEMPLATE = """<!DOCTYPE html>
 
 <section id="coverage">
  <h2>Detection coverage</h2>
- <p><b>{{ '%.0f'|format(coverage.overall*100) }}%</b> of <b>inferred</b> ATT&amp;CK techniques are covered by generated rules.
+ <p>Sample is <b>{{ 'DETECTABLE' if coverage.detectable else 'not yet detectable' }}</b> by
+    {{ coverage.inventory.yara_rules }} YARA + {{ coverage.inventory.behavioral_rules + coverage.inventory.ioc_rules }} Sigma generated rule(s).
+    <br>Technique-level rule coverage: <b>{{ '%.0f'|format(coverage.overall*100) }}%</b>
+    ({{ coverage.inferred_techniques }} inferred technique(s), of which those with a dedicated behavioural/IOC rule are marked below).
     Runtime coverage of <b>observed</b> techniques: <b>{{ '%.0f%%'|format(coverage.runtime_coverage*100) if coverage.runtime_coverage is not none else 'N/A (nothing executed)' }}</b>.</p>
+ {% if coverage.detectable and coverage.overall < 0.5 %}<p class="hint">ℹ️ A low technique-level percentage does not mean the sample is undetected — a YARA signature already flags it. It means few techniques have a dedicated <i>behavioural</i> rule, which typically requires dynamic evidence.</p>{% endif %}
  <div class="summary">
   <div class="card"><div class="k">Inferred ATT&amp;CK</div><div class="v">{{ coverage.inferred_techniques }}</div></div>
   <div class="card"><div class="k">Observed ATT&amp;CK</div><div class="v">{{ coverage.observed_techniques }}</div></div>

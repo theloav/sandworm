@@ -237,19 +237,36 @@ _BUNDLED_HEURISTICS = [
 # tooling language → Data Encrypted for Impact. Format-agnostic: works on a PE
 # even when the import table is dynamically resolved (as WannaCry's is).
 _RECOVERY_INHIBIT = [b"vssadmin", b"wbadmin", b"bcdedit", b"shadowcopy", b"wmic shadow"]
-_RANSOM_INDICATORS = [
-    b".wnry", b"wanacry", b"wncry", b"wanadecryptor", b".onion",
-    b"your files", b"files have been encrypted", b"files are encrypted",
-    b"decrypt", b"bitcoin", b"ransom", b"how to recover", b".locky", b".crypt",
+
+# STRONG ransom tells are near-unique to ransomware (family names, ransom-extension
+# markers, ransom-note phrases). One is enough to infer T1486.
+_RANSOM_STRONG = [
+    b".wnry", b".wncry", b"wanacry", b"wncry", b"wanadecryptor", b"@wanadecryptor",
+    b".locky", b".onion",
+    b"your files have been encrypted", b"files have been encrypted",
+    b"your important files", b"all your files have", b"files are encrypted",
+    b"how to decrypt", b"how to recover your",
 ]
+# WEAK tells appear legitimately in benign software (crypto libs, backups). On
+# their own they must NOT imply ransomware — a backdoor with a `decrypt()` call
+# or a `.crypt` reference is not ransomware. Require several from this set.
+_RANSOM_WEAK = [b"decrypt", b"bitcoin", b"ransom", b".crypt", b".encrypted", b"recover your files"]
 
 
-def ransomware_scan(data: bytes) -> tuple[list[str], list[str]]:
-    """Return (recovery_inhibit_hits, ransom_indicator_hits)."""
+def ransomware_scan(data: bytes) -> tuple[list[str], list[str], list[str]]:
+    """Return (recovery_inhibit_hits, strong_ransom_hits, weak_ransom_hits)."""
     low = data.lower()
     recovery = [s.decode() for s in _RECOVERY_INHIBIT if s in low]
-    ransom = [s.decode() for s in _RANSOM_INDICATORS if s in low]
-    return recovery, ransom
+    strong = [s.decode() for s in _RANSOM_STRONG if s in low]
+    weak = [s.decode() for s in _RANSOM_WEAK if s in low]
+    return recovery, strong, weak
+
+
+def is_ransomware(strong: list[str], weak: list[str]) -> bool:
+    """Infer ransomware (T1486) only on a STRONG tell, or on a preponderance of
+    weak tells (>=3). This rejects the generic ``decrypt`` + ``.crypt`` pair that
+    a benign backdoor legitimately contains."""
+    return bool(strong) or len(weak) >= 3
 
 
 def yara_scan(data: bytes) -> list[tuple[str, float]]:
@@ -343,7 +360,7 @@ class CommonAnalyzer(BaseAnalyzer):
             )
 
         # Ransomware heuristics (format-agnostic, intent-level).
-        recovery, ransom = ransomware_scan(data)
+        recovery, strong, weak = ransomware_scan(data)
         if recovery:
             items.append(
                 ctx.ev(
@@ -357,17 +374,25 @@ class CommonAnalyzer(BaseAnalyzer):
                     evidence_refs=[ref],
                 )
             )
-        # Require >=2 distinct ransom indicators to avoid firing on a stray word.
-        if len(ransom) >= 2:
+        # Infer ransomware only on a strong tell or a preponderance of weak ones —
+        # a lone `decrypt`/`.crypt` (common in benign backdoors) is NOT enough.
+        if is_ransomware(strong, weak):
+            indicators = strong + weak
+            # confidence scales with how *strong* the evidence is
+            conf = min(0.95, 0.5 + 0.18 * len(strong) + 0.05 * len(weak))
             items.append(
                 ctx.ev(
                     source="static.common",
                     artifact="file",
                     operation="write",
                     subject={"analyzer": self.name},
-                    object={"capability": "ransomware", "indicators": ransom},
-                    details={"why": "ransom-note / encryption-tool language present", "indicator_count": len(ransom)},
-                    confidence=min(0.95, 0.55 + 0.1 * len(ransom)),
+                    object={"capability": "ransomware", "indicators": indicators},
+                    details={
+                        "why": "ransom-note / family / extension markers present",
+                        "strong_signals": strong,
+                        "weak_signals": weak,
+                    },
+                    confidence=conf,
                     evidence_refs=[ref],
                 )
             )

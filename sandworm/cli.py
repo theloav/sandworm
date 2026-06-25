@@ -50,11 +50,28 @@ def analyze(
         typer.secho(f"  · {note}", fg=typer.colors.YELLOW)
     typer.echo(f"  evidence items : {len(result.store)}")
     typer.echo(f"  analyzers      : {', '.join(result.analyzers_run)}")
+    from .reporting.summary import build_summary
+
+    summary = build_summary(result.store, result.mappings, result.phases, isolated=result.isolated)
+    typer.secho(
+        f"  verdict        : risk={summary.risk}  maliciousness={summary.maliciousness_score}/100"
+        f"  family={summary.family_hint}",
+        fg=typer.colors.CYAN,
+    )
     typer.echo("  ATT&CK techniques:")
     for m in result.mappings:
-        typer.echo(f"     {m.technique_id} {m.technique_name}  conf={m.confidence:.2f}  — {m.why[:80]}")
-    typer.echo(f"  YARA rules     : {len(result.yara)}   Sigma rules: {len(result.sigma)}")
-    typer.echo(f"  coverage       : {result.coverage.overall*100:.0f}%")
+        typer.echo(f"     [{m.status:<9}] {m.technique_id} {m.technique_name}  conf={m.confidence:.2f}  — {m.why[:70]}")
+    cov = result.coverage
+    detect = "yes" if cov.detectable else "no"
+    typer.echo(
+        f"  detections     : YARA={len(result.yara)}  Sigma={len(result.sigma)}"
+        f" (behavioural={cov.inventory.behavioral_rules}, IOC={cov.inventory.ioc_rules})  detectable={detect}"
+    )
+    typer.echo(
+        f"  evidence/cov   : evidence={len(result.store)}  ATT&CK={cov.inferred_techniques} inferred"
+        f"/{cov.observed_techniques} observed  technique-rule-coverage={cov.overall*100:.0f}%"
+        f"  runtime={'N/A' if cov.runtime_coverage is None else f'{cov.runtime_coverage*100:.0f}%'}"
+    )
 
     out_path = Path(out) if out else run_dir / "report.html"
     from .reporting.report import write_report
