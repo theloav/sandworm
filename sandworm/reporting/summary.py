@@ -51,6 +51,7 @@ class ExecutiveSummary:
     family_hint: str              # "unknown" if not confidently fingerprinted
     family_confidence: float
     family_markers: list[str]     # what matched (explainable attribution)
+    family_components: list[tuple[str, str]]  # per-dimension attribution breakdown
     primary_capability: str
     risk: str                     # Critical | High | Medium | Low
     likelihood: str               # High | Medium | Low
@@ -220,6 +221,18 @@ def build_summary(
     isolated: bool,
 ) -> ExecutiveSummary:
     family, fam_conf, markers = _family_hint(store)
+    if family != "unknown":
+        # Honest, transparent attribution: say which dimensions actually
+        # contributed and which are still pending (so 95% is never mistaken for a
+        # multi-signal behavioral match).
+        family_components = [
+            ("static string markers", "matched: " + ", ".join(markers)),
+            ("strings/resources", "matched"),
+            ("imports", "not yet analysed"),
+            ("behaviour", "pending — requires dynamic execution"),
+        ]
+    else:
+        family_components = []
     net = len([it for it in store if it.details.get("ioc") and it.object.get("kind") in {"url", "domain", "ipv4"}])
     top = [f"{m.technique_id} {m.technique_name}" for m in sorted(mappings, key=lambda m: -m.confidence)[:5]]
     risk, likelihood, reasons = _risk(store, mappings, net, family)
@@ -234,6 +247,7 @@ def build_summary(
         family_hint=family,
         family_confidence=fam_conf,
         family_markers=markers,
+        family_components=family_components,
         primary_capability=_primary_capability(store, mappings),
         risk=risk,
         likelihood=likelihood,

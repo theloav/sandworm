@@ -127,3 +127,28 @@ def test_reasoning_graph_has_typed_chain():
     assert {"Sample", "Capability", "Technique", "Detection"} <= labels
     rels = {e.rel for e in graph.edges}
     assert {"CONTAINS", "INDICATES", "DETECTED_BY"} <= rels
+
+
+def test_library_artifacts_excluded_from_graph():
+    store = EvidenceStore()
+    store.append(EvidenceItem(run_id="r", source="static.common", artifact="string", operation="read",
+                 subject={"a": "x"}, object={"library_artifact": "golang.org", "kind": "domain"},
+                 details={"library_artifact": True}, confidence=0.25))
+    store.append(EvidenceItem(run_id="r", source="static.common", artifact="network", operation="resolve",
+                 subject={"a": "x"}, object={"kind": "domain", "value": "c2.evil.ru"},
+                 details={"ioc": True}, confidence=0.6))
+    graph = build_graph(store, map_evidence(store), sample_name="go.bin")
+    displays = " ".join(str(n.props.get("display", "")) for n in graph.nodes.values())
+    assert "golang.org" not in displays  # library artifact never enters the graph
+    assert "c2.evil.ru" in displays
+
+
+def test_confidence_breakdown_by_method():
+    store = EvidenceStore()
+    store.append(EvidenceItem(run_id="r", source="static.php", artifact="api_call", operation="exec",
+                 subject={"a": "x"}, object={"sink": "system"}, confidence=0.9))
+    m = [m for m in map_evidence(store) if m.technique_id == "T1059"][0]
+    bd = confidence_breakdown(store, m)
+    assert bd.by_method                       # method breakdown exists
+    assert "execution sink" in bd.by_method   # and names the actual method
+    assert sum(bd.by_method.values()) in range(98, 103)

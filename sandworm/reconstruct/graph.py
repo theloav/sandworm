@@ -80,6 +80,11 @@ def build_graph(store: EvidenceStore, mappings: list[AttackMapping] | None = Non
     ev_to_obj: dict[str, str] = {}
 
     for it in store:
+        # Benign library/toolchain artifacts must not participate in reasoning —
+        # they are kept in the evidence store for context but never become graph
+        # nodes (no analyst wants golang.org in the ATT&CK chain).
+        if it.details.get("library_artifact"):
+            continue
         # Capability findings get their own node type so the chain reads
         # "Sample → Capability(ransomware) → Technique(T1486)".
         if it.object.get("capability"):

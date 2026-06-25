@@ -111,7 +111,7 @@ _TEMPLATE = """<!DOCTYPE html>
 <nav><div class="inner">
  <a href="#summary">Summary</a><a href="#lifecycle">Lifecycle</a><a href="#graph">Reasoning graph</a>
  {% if layers %}<a href="#deobf">Deobfuscation</a>{% endif %}<a href="#attack">ATT&amp;CK</a>
- <a href="#findings">Findings</a><a href="#iocs">IOCs</a><a href="#coverage">Coverage</a>
+ <a href="#findings">Findings</a><a href="#differential">Differential</a><a href="#iocs">IOCs</a><a href="#coverage">Coverage</a>
  <a href="#detections">Detections</a><a href="#assessment">Assessment</a><a href="#appendix">Evidence</a>
 </div></nav>
 <main>
@@ -122,7 +122,9 @@ _TEMPLATE = """<!DOCTYPE html>
  <div class="banner">Suspected family: <b>{{ summary.family_hint }}</b>
    (static fingerprint similarity {{ '%.0f'|format(summary.family_confidence*100) }}%)
    — matched markers: {% for mk in summary.family_markers %}<span class="pill">{{ mk }}</span>{% endfor %}
-   <br><span class="muted">based on static markers, not a confirmed/behavioral attribution</span></div>
+   <table style="max-width:560px;margin-top:8px"><tr><th>Attribution dimension</th><th>Status</th></tr>
+   {% for dim, status in summary.family_components %}<tr><td>{{ dim }}</td><td class="muted">{{ status }}</td></tr>{% endfor %}</table>
+   <span class="muted">Similarity is from static markers only — not a confirmed/behavioral attribution.</span></div>
  {% endif %}
  <div class="summary">
   <div class="card"><div class="k">Risk</div><div class="v">{{ risk_pill(summary.risk)|safe }}</div></div>
@@ -209,8 +211,8 @@ _TEMPLATE = """<!DOCTYPE html>
    <td class="muted">{% for e in m.evidence_ids[:4] %}<a href="#{{ e }}">{{ e }}</a><br>{% endfor %}</td>
   </tr>
   <tr><td colspan="6" class="muted" style="background:#0d1117">
-     <b>Confidence provenance</b> —
-     derived from {% for s, p in bd.by_source.items() %}<span class="pill">{{ s }} {{ p }}%</span>{% endfor %}
+     <b>Confidence provenance</b> — by method: {% for m, p in bd.by_method.items() %}<span class="pill">{{ m }} {{ p }}%</span>{% endfor %}
+     <br>by lane: {% for s, p in bd.by_source.items() %}<span class="pill">{{ s }} {{ p }}%</span>{% endfor %}
      &nbsp;·&nbsp; <b>confidence timeline</b>:
      {% for lane, val in bd.lane_timeline() %}{{ lane }} <b>{{ val }}</b>{% if not loop.last %} → {% endif %}{% endfor %}
   </td></tr>
@@ -230,6 +232,21 @@ _TEMPLATE = """<!DOCTYPE html>
  {% endfor %}
  </table>
  </details>
+</section>
+
+<section id="differential">
+ <h2>Behaviour under differential conditions</h2>
+ {% if differential %}
+ <p class="muted">The sample was run under multiple conditions; behaviour that appears only under one condition reveals environment checks and dormant/staged payloads.</p>
+ {% for d in differential %}
+ <div class="banner"><b>{{ d.condition_a }}</b> vs <b>{{ d.condition_b }}</b> — {{ d.note }}
+  {% if d.only_in_a %}<br><span class="muted">only under {{ d.condition_a }}:</span> {% for x in d.only_in_a %}<span class="pill">{{ x }}</span>{% endfor %}{% endif %}
+  {% if d.only_in_b %}<br><span class="muted">only under {{ d.condition_b }}:</span> {% for x in d.only_in_b %}<span class="pill">{{ x }}</span>{% endfor %}{% endif %}
+ </div>
+ {% endfor %}
+ {% else %}
+ <p class="muted">Not run for this sample. Differential analysis (e.g. network on/off, Office present/absent) is a <b>dynamic-lane</b> capability — it executes the sample under several conditions and diffs the resulting evidence to expose staged downloaders and dormant payloads. Enable detonation in a verified isolated environment to populate this section.</p>
+ {% endif %}
 </section>
 
 <section id="iocs">
@@ -385,6 +402,26 @@ def _collect_library(store: EvidenceStore):
     return [escape(str(it.object.get("library_artifact"))) for it in store if it.details.get("library_artifact")]
 
 
+def _collect_differential(store: EvidenceStore):
+    """Differential-analysis findings (behaviour that changed across conditions —
+    network on/off, etc.). First-class because environment-sensitive behaviour is
+    one of the strongest signals of staged/dormant malware."""
+    out = []
+    for it in store:
+        if it.source == "enrich.differential":
+            conds = it.object.get("conditions", ["A", "B"])
+            out.append(
+                type("Diff", (), {
+                    "condition_a": escape(str(conds[0])),
+                    "condition_b": escape(str(conds[1] if len(conds) > 1 else "?")),
+                    "note": escape(str(it.details.get("note", ""))),
+                    "only_in_a": [escape(str(x)) for x in it.details.get("only_in_a", [])],
+                    "only_in_b": [escape(str(x)) for x in it.details.get("only_in_b", [])],
+                })
+            )
+    return out
+
+
 # Reasoning-graph tiers: read left → right as Sample → evidence-entity →
 # capability → technique → detection. Evidence nodes are hidden (they back the
 # drill-down/citations but would clutter the picture).
@@ -535,6 +572,7 @@ def render_html(inp: ReportInputs) -> str:
     layers, final_payload = _collect_layers(inp.store)
     iocs = _collect_iocs(inp.store)
     library = _collect_library(inp.store)
+    differential = _collect_differential(inp.store)
     graph_svg, graph_stats = _graph_svg(inp.graph)
     isolated = inp.isolation.startswith("verified")
     summary = build_summary(inp.store, inp.mappings, inp.phases, isolated=isolated)
@@ -556,6 +594,7 @@ def render_html(inp: ReportInputs) -> str:
         final_payload=final_payload,
         iocs=iocs,
         library=library,
+        differential=differential,
         yara=inp.yara,
         sigma=inp.sigma,
         coverage=inp.coverage,
