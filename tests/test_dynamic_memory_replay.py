@@ -208,6 +208,20 @@ def test_mismatched_windows_report_on_php_is_refused():
     assert summary.risk == "Low"
 
 
+def test_generic_format_also_refuses_windows_report(samples_dir):
+    # A 'generic' blob (e.g. C source) is NOT a PE, so a Windows report is refused
+    # too — only pe/dll accept it. (Regression: C source was scored as injection.)
+    base = samples_dir.parent
+    result = analyze_sample(
+        Sample.from_bytes("notes.txt", b"just some plain text, definitely not a PE\n"),
+        enable_dynamic=False,
+        cape_report=str(base / "synthetic" / "recorded_cape_report.json"),
+    )
+    assert result.triage.fmt not in {"pe", "dll"}
+    assert any("refused" in n.lower() for n in result.notes)
+    assert not any(it.source.startswith(("dynamic.", "memory.")) for it in result.store)
+
+
 def test_family_attribution_is_medium_when_static_only():
     store = EvidenceStore()
     store.append(EvidenceItem(run_id="r", source="static.pe", artifact="string", operation="read",

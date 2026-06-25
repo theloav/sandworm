@@ -64,13 +64,14 @@ def _ingest_recorded_reports(
 
     ran: list[str] = []
     ref = f"sample:{sample.sha256}"
-    # The bundled CAPE/vol3 adapters normalize a *Windows/PE* sandbox run. Folding
-    # such a report into a non-PE sample (a PHP shell, an ELF, a script) would
+    # The bundled CAPE/vol3 adapters normalize a *Windows/PE* sandbox run, so such
+    # a report belongs ONLY to a PE/DLL sample. Folding it into anything else (a
+    # PHP shell, an ELF, a script, or a 'generic' blob like C source) would
     # attribute another binary's behaviour to this file — inflating the verdict
-    # with injection/persistence/C2 that never happened here. So we REFUSE the
-    # mismatch rather than ingest-and-warn: a report about a different platform is
-    # not evidence about this sample.
-    win_report_ok = sample.format_hint in {"pe", "dll", "generic", "unknown", ""}
+    # with injection/persistence/C2 that never happened here. A real PE always
+    # triages as 'pe' (the MZ magic is reliable), so 'generic'/'unknown' are NOT
+    # treated as PE: we refuse the mismatch rather than ingest-and-warn.
+    win_report_ok = sample.format_hint in {"pe", "dll"}
 
     if cape_report and Path(cape_report).exists():
         if not win_report_ok:
