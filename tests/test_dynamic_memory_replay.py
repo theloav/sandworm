@@ -19,10 +19,16 @@ from sandworm.reconstruct.runtime import build_runtime_view
 from sandworm.reporting.summary import build_summary
 
 
+def _pe_sample() -> Sample:
+    # A minimal PE-format sample (MZ magic) so the Windows replay reports are a
+    # format match and get ingested (a Windows report for a non-PE sample is
+    # refused as belonging to a different binary).
+    return Sample.from_bytes("loader.exe", b"MZ" + b"\x00" * 256)
+
+
 def _run(samples_dir: Path):
-    sample = Sample.from_path(samples_dir / "benign_dropper.sh")
     return analyze_sample(
-        sample,
+        _pe_sample(),
         enable_dynamic=False,  # isolation NOT verified — proves replay is ungated
         cape_report=str(samples_dir / "recorded_cape_report.json"),
         memory_report=str(samples_dir / "recorded_vol3_report.json"),
@@ -151,21 +157,28 @@ def test_score_factors_credit_distinct_capability_axes():
     assert summary.maliciousness_score >= 35  # credited for real capability, not stuck at a floor
 
 
-def test_score_uses_diminishing_returns_not_a_flat_ceiling(samples_dir):
-    # Two different samples with the same replayed evidence must NOT both pin to
-    # 100 — the diminishing-returns curve keeps the high band differentiating.
-    rep = dict(cape_report=str(samples_dir / "recorded_cape_report.json"),
-               memory_report=str(samples_dir / "recorded_vol3_report.json"))
-    php = analyze_sample(Sample.from_path(samples_dir / "benign_webshell.php"), enable_dynamic=False, **rep)
-    sh = analyze_sample(Sample.from_path(samples_dir / "benign_dropper.sh"), enable_dynamic=False, **rep)
-    s_php = build_summary(php.store, php.mappings, php.phases, isolated=False)
-    s_sh = build_summary(sh.store, sh.mappings, sh.phases, isolated=False)
-    assert s_php.maliciousness_score != s_sh.maliciousness_score   # they differentiate
-    assert s_php.maliciousness_score <= 100
-    # the compression is shown as an explicit factor when it kicks in
-    assert any("Diminishing returns" in label for label, _ in s_php.score_factors)
-    # and the factor column still sums to the displayed score
-    assert sum(p for _, p in s_php.score_factors) == s_php.maliciousness_score
+def test_score_uses_diminishing_returns_not_a_flat_ceiling():
+    # A heavily-stacked sample (ransomware + injection + persistence + C2 + ...)
+    # must NOT simply pin to 100 — the diminishing-returns curve compresses the
+    # top so the high band keeps differentiating, shown as an explicit factor.
+    store = EvidenceStore()
+    store.append(EvidenceItem(run_id="r", source="static.common", artifact="file", operation="write",
+                 subject={"a": "x"}, object={"capability": "ransomware", "indicators": [".wnry"]}, confidence=0.8))
+    for api in ("WriteProcessMemory", "CreateRemoteThread", "VirtualAllocEx"):
+        store.append(EvidenceItem(run_id="r", source="dynamic.windows.cape", artifact="api_call", operation="exec",
+                     subject={"a": "x"}, object={"api": api}, confidence=0.9))
+    store.append(EvidenceItem(run_id="r", source="static.pe", artifact="api_call", operation="resolve",
+                 subject={"a": "x"}, object={"import": "CreateService"}, details={"attack_hint": "T1543.003", "why": "svc"}, confidence=0.55))
+    store.append(EvidenceItem(run_id="r", source="dynamic.windows.cape", artifact="network", operation="connect",
+                 subject={"a": "x"}, object={"kind": "ipv4", "value": "9.9.9.9", "host": "9.9.9.9"},
+                 details={"ioc": True}, confidence=0.85))
+    summary = build_summary(store, map_evidence(store), build_narrative(map_evidence(store)), isolated=True)
+    positive = sum(p for _, p in summary.score_factors if p > 0)
+    dr = [p for label, p in summary.score_factors if "Diminishing returns" in label]
+    assert positive > 100                             # the additive signals exceed the ceiling
+    assert dr and dr[0] < 0                            # compression is applied as a negative factor
+    assert summary.maliciousness_score < 100          # and the final score lands below the ceiling
+    assert sum(p for _, p in summary.score_factors) == summary.maliciousness_score
 
 
 def test_low_scores_are_untouched_by_diminishing_returns():
@@ -178,12 +191,21 @@ def test_low_scores_are_untouched_by_diminishing_returns():
     assert not any("Diminishing returns" in label for label, _ in summary.score_factors)
 
 
-def test_mismatched_windows_report_on_php_is_flagged(samples_dir):
+def test_mismatched_windows_report_on_php_is_refused():
+    # A Windows/PE report must NOT be folded into a benign PHP sample's verdict —
+    # otherwise the file is falsely rated for injection it never did.
+    base = Path(__file__).resolve().parent.parent / "samples"
     result = analyze_sample(
-        Sample.from_path(samples_dir / "benign_webshell.php"), enable_dynamic=False,
-        cape_report=str(samples_dir / "recorded_cape_report.json"),
+        Sample.from_path(base / "benign" / "contact_form.php"), enable_dynamic=False,
+        cape_report=str(base / "synthetic" / "recorded_cape_report.json"),
+        memory_report=str(base / "synthetic" / "recorded_vol3_report.json"),
     )
-    assert any("does not correspond to this file" in n for n in result.notes)
+    assert any("refused" in n.lower() for n in result.notes)
+    # the bogus Windows evidence is NOT in the store, and the verdict stays Low
+    assert not any(it.source.startswith(("dynamic.", "memory.")) for it in result.store)
+    assert "T1055" not in {m.technique_id for m in result.mappings}
+    summary = build_summary(result.store, result.mappings, result.phases, isolated=False)
+    assert summary.risk == "Low"
 
 
 def test_family_attribution_is_medium_when_static_only():

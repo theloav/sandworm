@@ -64,34 +64,48 @@ def _ingest_recorded_reports(
 
     ran: list[str] = []
     ref = f"sample:{sample.sha256}"
+    # The bundled CAPE/vol3 adapters normalize a *Windows/PE* sandbox run. Folding
+    # such a report into a non-PE sample (a PHP shell, an ELF, a script) would
+    # attribute another binary's behaviour to this file — inflating the verdict
+    # with injection/persistence/C2 that never happened here. So we REFUSE the
+    # mismatch rather than ingest-and-warn: a report about a different platform is
+    # not evidence about this sample.
+    win_report_ok = sample.format_hint in {"pe", "dll", "generic", "unknown", ""}
+
     if cape_report and Path(cape_report).exists():
-        from ..analyzers.dynamic.windows_cape import normalize_cape_report
-
-        report = json.loads(Path(cape_report).read_text())
-        items = list(normalize_cape_report(report, ctx, ref))
-        store.extend(items)
-        ran.append("dynamic.windows.cape(replay)")
-        notes.append(f"ingested recorded dynamic report ({len(items)} events; replay — no live detonation)")
-        # The CAPE adapter normalizes a Windows/PE sandbox run. Ingesting it for a
-        # non-PE sample (a PHP shell, an ELF, a script) means the runtime evidence
-        # does NOT belong to this file — flag it so the report isn't read as truth.
-        if sample.format_hint not in {"pe", "dll", "unknown", ""}:
+        if not win_report_ok:
             notes.append(
-                f"⚠ the recorded dynamic report is Windows/PE-oriented but this sample is '{sample.format_hint}' — "
-                "its runtime evidence does not correspond to this file; treat the Runtime section as a mismatched demo"
+                f"⚠ refused the recorded dynamic report: it is a Windows/PE sandbox run but this sample is "
+                f"'{sample.format_hint}'. It describes a different binary, so it is NOT folded into the verdict "
+                "(analysed static-only). Provide a report produced from THIS sample, or run static-only."
             )
-        audit.log(run_id=run_id, action="ingest_dynamic_report", source="dynamic.windows.cape",
-                  sample_hash=sample.sha256, events=len(items), path=str(cape_report))
-    if memory_report and Path(memory_report).exists():
-        from ..analyzers.memory.vol3 import normalize_memory_report
+        else:
+            from ..analyzers.dynamic.windows_cape import normalize_cape_report
 
-        report = json.loads(Path(memory_report).read_text())
-        items = list(normalize_memory_report(report, ctx, ref))
-        store.extend(items)
-        ran.append("memory.vol3(replay)")
-        notes.append(f"ingested recorded memory report ({len(items)} artifacts; replay — no live detonation)")
-        audit.log(run_id=run_id, action="ingest_memory_report", source="memory.vol3",
-                  sample_hash=sample.sha256, artifacts=len(items), path=str(memory_report))
+            report = json.loads(Path(cape_report).read_text())
+            items = list(normalize_cape_report(report, ctx, ref))
+            store.extend(items)
+            ran.append("dynamic.windows.cape(replay)")
+            notes.append(f"ingested recorded dynamic report ({len(items)} events; replay — no live detonation)")
+            audit.log(run_id=run_id, action="ingest_dynamic_report", source="dynamic.windows.cape",
+                      sample_hash=sample.sha256, events=len(items), path=str(cape_report))
+
+    if memory_report and Path(memory_report).exists():
+        if not win_report_ok:
+            notes.append(
+                f"⚠ refused the recorded memory report: it is Windows-oriented but this sample is "
+                f"'{sample.format_hint}' — it does not describe this file (analysed static-only)."
+            )
+        else:
+            from ..analyzers.memory.vol3 import normalize_memory_report
+
+            report = json.loads(Path(memory_report).read_text())
+            items = list(normalize_memory_report(report, ctx, ref))
+            store.extend(items)
+            ran.append("memory.vol3(replay)")
+            notes.append(f"ingested recorded memory report ({len(items)} artifacts; replay — no live detonation)")
+            audit.log(run_id=run_id, action="ingest_memory_report", source="memory.vol3",
+                      sample_hash=sample.sha256, artifacts=len(items), path=str(memory_report))
     return ran
 
 

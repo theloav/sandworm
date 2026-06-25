@@ -3,9 +3,9 @@
  * contact_form.php — a genuinely benign, legitimate web page.
  *
  * A normal contact form: validates input, escapes output, stores nothing
- * dangerous. It deliberately uses NO command/code execution sinks (no system,
- * exec, eval, assert, preg_replace /e, variable-functions) and NO obfuscation —
- * exactly the kind of legitimate PHP a web-shell heuristic must NOT flag.
+ * dangerous. It performs only input validation and HTML escaping — there is no
+ * command or code execution and no obfuscation, exactly the kind of legitimate
+ * PHP that a web-shell heuristic must not flag.
  */
 declare(strict_types=1);
 
