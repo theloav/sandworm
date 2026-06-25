@@ -238,35 +238,59 @@ _BUNDLED_HEURISTICS = [
 # even when the import table is dynamically resolved (as WannaCry's is).
 _RECOVERY_INHIBIT = [b"vssadmin", b"wbadmin", b"bcdedit", b"shadowcopy", b"wmic shadow"]
 
-# STRONG ransom tells are near-unique to ransomware (family names, ransom-extension
-# markers, ransom-note phrases). One is enough to infer T1486.
-_RANSOM_STRONG = [
-    b".wnry", b".wncry", b"wanacry", b"wncry", b"wanadecryptor", b"@wanadecryptor",
-    b".locky", b".onion",
-    b"your files have been encrypted", b"files have been encrypted",
-    b"your important files", b"all your files have", b"files are encrypted",
-    b"how to decrypt", b"how to recover your",
-]
-# WEAK tells appear legitimately in benign software (crypto libs, backups). On
-# their own they must NOT imply ransomware — a backdoor with a `decrypt()` call
-# or a `.crypt` reference is not ransomware. Require several from this set.
-_RANSOM_WEAK = [b"decrypt", b"bitcoin", b"ransom", b".crypt", b".encrypted", b"recover your files"]
+# Ransomware tells, grouped into INDEPENDENT categories. T1486 is only inferred
+# when several distinct categories co-occur — a single category (e.g. a `.crypt`
+# extension, or a `CryptEncrypt` import) is common in benign software and must
+# NOT imply ransomware on its own. Note: the generic word "decrypt" is
+# deliberately excluded — every crypto library contains it.
+_RANSOM_CATEGORIES: dict[str, list[bytes]] = {
+    # near-unique family / ransom-extension / ransom-note markers (one is enough)
+    "family": [b".wnry", b".wncry", b"wanacry", b"wncry", b"wanadecryptor", b"@wanadecryptor", b".locky", b".cryptolocker"],
+    "note": [
+        b"files have been encrypted", b"your files are encrypted", b"your important files",
+        b"all your files", b"how to decrypt your", b"how to recover your", b"recover your files",
+        b"your documents photos databases",
+    ],
+    "extension": [b".crypt", b".encrypted", b".crypto", b".locked", b".crypz", b".enc"],
+    "payment": [b"bitcoin", b"btc wallet", b"monero", b"ransom", b".onion"],
+    "crypto_api": [b"cryptencrypt", b"cryptgenkey", b"cryptderivekey", b"cryptimportkey"],
+}
 
 
-def ransomware_scan(data: bytes) -> tuple[list[str], list[str], list[str]]:
-    """Return (recovery_inhibit_hits, strong_ransom_hits, weak_ransom_hits)."""
+def ransomware_scan(data: bytes) -> tuple[list[str], dict[str, list[str]]]:
+    """Return (recovery_inhibit_hits, {category: [hits]}) — the recovery hits feed
+    T1490 and also count as a ransomware category."""
     low = data.lower()
     recovery = [s.decode() for s in _RECOVERY_INHIBIT if s in low]
-    strong = [s.decode() for s in _RANSOM_STRONG if s in low]
-    weak = [s.decode() for s in _RANSOM_WEAK if s in low]
-    return recovery, strong, weak
+    cats: dict[str, list[str]] = {}
+    for cat, needles in _RANSOM_CATEGORIES.items():
+        hits = [n.decode() for n in needles if n in low]
+        if hits:
+            cats[cat] = hits
+    if recovery:
+        cats["recovery_inhibit"] = recovery
+    return recovery, cats
 
 
-def is_ransomware(strong: list[str], weak: list[str]) -> bool:
-    """Infer ransomware (T1486) only on a STRONG tell, or on a preponderance of
-    weak tells (>=3). This rejects the generic ``decrypt`` + ``.crypt`` pair that
-    a benign backdoor legitimately contains."""
-    return bool(strong) or len(weak) >= 3
+def is_ransomware(cats: dict[str, list[str]]) -> bool:
+    """Infer ransomware only when (a) a family/ransom-specific marker is present,
+    or (b) at least two INDEPENDENT categories co-occur and at least one is a
+    ransomware-defining behaviour (note language, shadow-copy deletion, or an
+    extension paired with payment). This rejects a backdoor that merely contains
+    crypto routines and a `.crypt`/`.encrypted` string."""
+    if cats.get("family"):
+        return True
+    present = {c for c in cats if cats[c]}
+    behavioural = present & {"note", "recovery_inhibit"}
+    ext_and_payment = {"extension", "payment"} <= present
+    return len(present) >= 2 and (bool(behavioural) or ext_and_payment)
+
+
+def ransom_indicators(cats: dict[str, list[str]]) -> list[str]:
+    out: list[str] = []
+    for hits in cats.values():
+        out.extend(hits)
+    return out
 
 
 def yara_scan(data: bytes) -> list[tuple[str, float]]:
@@ -360,7 +384,7 @@ class CommonAnalyzer(BaseAnalyzer):
             )
 
         # Ransomware heuristics (format-agnostic, intent-level).
-        recovery, strong, weak = ransomware_scan(data)
+        recovery, ransom_cats = ransomware_scan(data)
         if recovery:
             items.append(
                 ctx.ev(
@@ -374,12 +398,14 @@ class CommonAnalyzer(BaseAnalyzer):
                     evidence_refs=[ref],
                 )
             )
-        # Infer ransomware only on a strong tell or a preponderance of weak ones —
-        # a lone `decrypt`/`.crypt` (common in benign backdoors) is NOT enough.
-        if is_ransomware(strong, weak):
-            indicators = strong + weak
-            # confidence scales with how *strong* the evidence is
-            conf = min(0.95, 0.5 + 0.18 * len(strong) + 0.05 * len(weak))
+        # Infer ransomware only when independent categories co-occur (family marker,
+        # or note/recovery + another category). A lone crypto routine or `.crypt`
+        # string is NOT enough — that misclassified benign backdoors.
+        if is_ransomware(ransom_cats):
+            cat_names = sorted(c for c in ransom_cats if ransom_cats[c])
+            indicators = ransom_indicators(ransom_cats)
+            # confidence scales with the number of independent categories.
+            conf = min(0.95, 0.45 + 0.16 * len(cat_names)) if "family" not in ransom_cats else min(0.95, 0.78 + 0.05 * len(cat_names))
             items.append(
                 ctx.ev(
                     source="static.common",
@@ -388,9 +414,8 @@ class CommonAnalyzer(BaseAnalyzer):
                     subject={"analyzer": self.name},
                     object={"capability": "ransomware", "indicators": indicators},
                     details={
-                        "why": "ransom-note / family / extension markers present",
-                        "strong_signals": strong,
-                        "weak_signals": weak,
+                        "why": f"independent ransomware categories present: {', '.join(cat_names)}",
+                        "categories": cat_names,
                     },
                     confidence=conf,
                     evidence_refs=[ref],

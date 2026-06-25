@@ -89,14 +89,33 @@ def _has_capability(store: EvidenceStore, capability: str) -> bool:
 
 
 def _primary_capability(store: EvidenceStore, mappings: list[AttackMapping]) -> str:
-    if _has_verdict(store, "php_webshell"):
-        best = max((m for m in mappings if m.technique_id == "T1505.003"), key=lambda m: m.confidence, default=None)
-        return f"interactive web shell — remote command execution ({best.status if best else 'inferred'})"
+    tids = {m.technique_id for m in mappings}
     tactics = {m.tactic for m in mappings}
+
+    def _status(*technique_ids: str) -> str:
+        cand = [m for m in mappings if m.technique_id in technique_ids]
+        return max(cand, key=lambda m: m.confidence).status if cand else "inferred"
+
+    # Specific, recognisable capability verdicts first (most informative).
+    if _has_verdict(store, "php_webshell"):
+        return f"interactive web shell — remote command execution ({_status('T1505.003')})"
+    if _has_capability(store, "ransomware") or "T1486" in tids:
+        return f"ransomware — data encryption for impact ({_status('T1486')})"
+    if "T1055" in tids:
+        # injection without its own exec evidence reads as a loader/injector
+        return f"process injection / loader ({_status('T1055')})"
+    if "T1486" in tids or "impact" in tactics:
+        return f"destructive impact ({_status('T1486')})"
+
     for tactic, label in _PRIMARY_TACTIC_ORDER:
         if tactic in tactics:
             best = max((m for m in mappings if m.tactic == tactic), key=lambda m: m.confidence)
             return f"{label} ({best.status})"
+    # We still mapped techniques even if none is a 'primary' tactic — don't claim
+    # "no clear capability" when ATT&CK techniques exist.
+    if mappings:
+        top = max(mappings, key=lambda m: m.confidence)
+        return f"{top.technique_name} ({top.status})"
     return "no clear malicious capability"
 
 

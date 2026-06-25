@@ -56,6 +56,7 @@ class ConfidenceBreakdown:
     by_source: dict[str, int]                 # source -> % contribution
     by_method: dict[str, int]                 # detection method -> % contribution
     lane_confidence: dict[str, float | None]  # static/dynamic/memory -> best conf or None (pending)
+    signals: list[str] = field(default_factory=list)   # the concrete atoms that fired
     contributions: list[tuple[str, float]] = field(default_factory=list)
 
     def lane_timeline(self) -> list[tuple[str, str]]:
@@ -67,6 +68,27 @@ class ConfidenceBreakdown:
         return out
 
 
+def _signal_of(it) -> str:
+    """A short, human label for the concrete atom that fired (for the
+    '+exec(), +proc_open(), +outbound URL' style explanation)."""
+    obj = it.object
+    if obj.get("sink"):
+        return str(obj["sink"]) + "()"
+    if obj.get("import") or obj.get("symbol") or obj.get("api"):
+        return str(obj.get("import") or obj.get("symbol") or obj.get("api"))
+    if obj.get("kind") in {"url", "domain", "ipv4"}:
+        return f"{obj.get('kind')}:{obj.get('value')}"
+    if obj.get("capability"):
+        return str(obj["capability"]) + " indicators"
+    if obj.get("verdict"):
+        return str(obj["verdict"])
+    if obj.get("yara_rule"):
+        return "YARA:" + str(obj["yara_rule"])
+    if it.operation == "decode":
+        return "deobfuscated layer"
+    return ""
+
+
 def confidence_breakdown(store: EvidenceStore, mapping: AttackMapping) -> ConfidenceBreakdown:
     fetched = [store.get(eid) for eid in mapping.evidence_ids]
     items = [it for it in fetched if it is not None]
@@ -75,6 +97,7 @@ def confidence_breakdown(store: EvidenceStore, mapping: AttackMapping) -> Confid
     by_method_raw: dict[str, float] = {}
     lane_best: dict[str, float | None] = {ln: None for ln in _LANES}
     contributions: list[tuple[str, float]] = []
+    signals: list[str] = []
     for it in items:
         by_source_raw[it.source] = max(by_source_raw.get(it.source, 0.0), it.confidence)
         method = _method_of(it)
@@ -83,6 +106,9 @@ def confidence_breakdown(store: EvidenceStore, mapping: AttackMapping) -> Confid
         cur = lane_best[lane]
         lane_best[lane] = it.confidence if cur is None else max(cur, it.confidence)
         contributions.append((it.source, it.confidence))
+        atom = _signal_of(it)
+        if atom and atom not in signals:
+            signals.append(atom)
 
     total = sum(by_source_raw.values()) or 1.0
     by_source = {s: round(100 * v / total) for s, v in sorted(by_source_raw.items(), key=lambda kv: -kv[1])}
@@ -95,5 +121,6 @@ def confidence_breakdown(store: EvidenceStore, mapping: AttackMapping) -> Confid
         by_source=by_source,
         by_method=by_method,
         lane_confidence=lane_best,
+        signals=signals[:8],
         contributions=contributions,
     )

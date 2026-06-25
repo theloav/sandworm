@@ -152,3 +152,33 @@ def test_confidence_breakdown_by_method():
     assert bd.by_method                       # method breakdown exists
     assert "execution sink" in bd.by_method   # and names the actual method
     assert sum(bd.by_method.values()) in range(98, 103)
+    assert "system()" in bd.signals           # the concrete atom is surfaced
+
+
+def test_attack_hint_surfaces_extra_techniques():
+    # An analyzer can attribute a technique purely via details.attack_hint.
+    store = EvidenceStore()
+    store.append(EvidenceItem(run_id="r", source="static.pe", artifact="api_call", operation="resolve",
+                 subject={"a": "x"}, object={"import": "CreateService"},
+                 details={"attack_hint": "T1543.003", "why": "service persistence"}, confidence=0.55))
+    tids = {m.technique_id for m in map_evidence(store)}
+    assert "T1543.003" in tids
+
+
+def test_lone_crypto_api_is_not_ransomware():
+    # A CryptEncrypt import alone must NOT map to T1486 (benign crypto use).
+    store = EvidenceStore()
+    store.append(EvidenceItem(run_id="r", source="static.pe", artifact="api_call", operation="resolve",
+                 subject={"a": "x"}, object={"import": "CryptEncrypt"}, details={"why": "encryption"}, confidence=0.3))
+    assert "T1486" not in {m.technique_id for m in map_evidence(store)}
+
+
+def test_system_information_does_not_trigger_t1059():
+    # "system information discovery" must not match the execution sink "system".
+    store = EvidenceStore()
+    store.append(EvidenceItem(run_id="r", source="static.pe", artifact="api_call", operation="resolve",
+                 subject={"a": "x"}, object={"import": "GetComputerName"},
+                 details={"attack_hint": "T1082", "why": "system information discovery"}, confidence=0.35))
+    tids = {m.technique_id for m in map_evidence(store)}
+    assert "T1082" in tids
+    assert "T1059" not in tids

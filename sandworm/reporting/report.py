@@ -136,6 +136,7 @@ _TEMPLATE = """<!DOCTYPE html>
   <div class="card"><div class="k">Highest inferred phase</div><div class="v">{{ summary.highest_inferred_phase }} <span class="muted">(static)</span></div></div>
   <div class="card"><div class="k">ATT&amp;CK techniques</div><div class="v">{{ summary.technique_count }} <span class="muted">({{ summary.network_indicator_count }} net IOC)</span></div></div>
  </div>
+ <p class="muted" style="margin-top:10px"><b>Evidence breakdown:</b> {% for label, n in evidence_classes %}<span class="pill">{{ label }} {{ n }}</span>{% endfor %}</p>
 </section>
 
 <section id="lifecycle">
@@ -211,10 +212,10 @@ _TEMPLATE = """<!DOCTYPE html>
    <td class="muted">{% for e in m.evidence_ids[:4] %}<a href="#{{ e }}">{{ e }}</a><br>{% endfor %}</td>
   </tr>
   <tr><td colspan="6" class="muted" style="background:#0d1117">
-     <b>Confidence provenance</b> — by method: {% for m, p in bd.by_method.items() %}<span class="pill">{{ m }} {{ p }}%</span>{% endfor %}
-     <br>by lane: {% for s, p in bd.by_source.items() %}<span class="pill">{{ s }} {{ p }}%</span>{% endfor %}
-     &nbsp;·&nbsp; <b>confidence timeline</b>:
-     {% for lane, val in bd.lane_timeline() %}{{ lane }} <b>{{ val }}</b>{% if not loop.last %} → {% endif %}{% endfor %}
+     <b>Why {{ '%.2f'|format(m.confidence) }}?</b> signals: {% for s in bd.signals %}<span class="pill">+ {{ s }}</span>{% endfor %}
+     <br>by method: {% for meth, p in bd.by_method.items() %}<span class="pill">{{ meth }} {{ p }}%</span>{% endfor %}
+     &nbsp;·&nbsp; by lane: {% for s, p in bd.by_source.items() %}<span class="pill">{{ s }} {{ p }}%</span>{% endfor %}
+     &nbsp;·&nbsp; <b>timeline</b>: {% for lane, val in bd.lane_timeline() %}{{ lane }} <b>{{ val }}</b>{% if not loop.last %} → {% endif %}{% endfor %}
   </td></tr>
   {% endfor %}
  </table>
@@ -275,6 +276,12 @@ _TEMPLATE = """<!DOCTYPE html>
     ({{ coverage.inferred_techniques }} inferred technique(s), of which those with a dedicated behavioural/IOC rule are marked below).
     Runtime coverage of <b>observed</b> techniques: <b>{{ '%.0f%%'|format(coverage.runtime_coverage*100) if coverage.runtime_coverage is not none else 'N/A (nothing executed)' }}</b>.</p>
  {% if coverage.detectable and coverage.overall < 0.5 %}<p class="hint">ℹ️ A low technique-level percentage does not mean the sample is undetected — a YARA signature already flags it. It means few techniques have a dedicated <i>behavioural</i> rule, which typically requires dynamic evidence.</p>{% endif %}
+ <h3>Detection readiness: <span class="risk r-{{ 'High' if readiness_level=='High' else 'Medium' if readiness_level=='Medium' else 'Low' }}">{{ readiness_level }}</span></h3>
+ <div class="summary">
+ {% for label, ok in readiness_rows %}
+  <div class="card"><div class="k">{{ label }}</div><div class="v">{{ '✓ available' if ok else '— none' }}</div></div>
+ {% endfor %}
+ </div>
  <div class="summary">
   <div class="card"><div class="k">Inferred ATT&amp;CK</div><div class="v">{{ coverage.inferred_techniques }}</div></div>
   <div class="card"><div class="k">Observed ATT&amp;CK</div><div class="v">{{ coverage.observed_techniques }}</div></div>
@@ -404,6 +411,54 @@ def _collect_library(store: EvidenceStore):
     """Benign toolchain/SDK references, kept OUT of the IOC list (reviewer ask:
     separate library artifacts from network IOCs)."""
     return [escape(str(it.object.get("library_artifact"))) for it in store if it.details.get("library_artifact")]
+
+
+def _evidence_classes(store: EvidenceStore, mappings) -> list[tuple[str, int]]:
+    """Break the raw evidence count into analyst-friendly classes."""
+    iocs = caps = imports = sinks = strings = libs = decode = 0
+    for it in store:
+        o, d = it.object, it.details
+        if d.get("library_artifact"):
+            libs += 1
+        elif d.get("ioc"):
+            iocs += 1
+        elif o.get("capability"):
+            caps += 1
+        elif o.get("import") or o.get("symbol"):
+            imports += 1
+        elif o.get("sink"):
+            sinks += 1
+        elif it.operation == "decode":
+            decode += 1
+        else:
+            strings += 1
+    classes = [
+        ("ATT&CK techniques", len(mappings)),
+        ("Capabilities", caps),
+        ("Execution sinks", sinks),
+        ("Imports/symbols", imports),
+        ("IOCs", iocs),
+        ("Deobfuscation layers", decode),
+        ("Other strings", strings),
+        ("Library artifacts", libs),
+    ]
+    return [(label, n) for label, n in classes if n]
+
+
+def _detection_readiness(coverage, iocs) -> tuple[str, list[tuple[str, bool]]]:
+    """Can a SOC actually detect this sample, and with what? Returns (level, rows)."""
+    inv = coverage.inventory
+    has_net = any(getattr(i, "kind", "") in {"url", "domain", "ipv4"} for i in iocs)
+    rows = [
+        ("YARA signature", inv.yara_rules > 0),
+        ("Sigma (IOC)", inv.ioc_rules > 0),
+        ("Sigma (behavioural)", inv.behavioral_rules > 0),
+        ("Network IOC", has_net),
+        ("Runtime/behaviour", inv.runtime_rules > 0),
+    ]
+    score = sum(1 for _, ok in rows if ok)
+    level = "High" if (inv.behavioral_rules and inv.yara_rules) else "Medium" if score >= 2 else "Low" if score else "None"
+    return level, rows
 
 
 def _collect_differential(store: EvidenceStore):
@@ -577,6 +632,8 @@ def render_html(inp: ReportInputs) -> str:
     iocs = _collect_iocs(inp.store)
     library = _collect_library(inp.store)
     differential = _collect_differential(inp.store)
+    evidence_classes = _evidence_classes(inp.store, inp.mappings)
+    readiness_level, readiness_rows = _detection_readiness(inp.coverage, iocs)
     graph_svg, graph_stats = _graph_svg(inp.graph)
     isolated = inp.isolation.startswith("verified")
     summary = build_summary(inp.store, inp.mappings, inp.phases, isolated=isolated)
@@ -599,6 +656,9 @@ def render_html(inp: ReportInputs) -> str:
         iocs=iocs,
         library=library,
         differential=differential,
+        evidence_classes=evidence_classes,
+        readiness_level=readiness_level,
+        readiness_rows=readiness_rows,
         yara=inp.yara,
         sigma=inp.sigma,
         coverage=inp.coverage,

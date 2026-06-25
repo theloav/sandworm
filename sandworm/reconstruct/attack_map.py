@@ -26,6 +26,34 @@ TACTICS = [
     "exfiltration", "impact",
 ]
 
+# Technique id -> (name, tactic). Lets any analyzer surface a technique simply by
+# emitting ``details.attack_hint = "Txxxx"`` — no bespoke mapping rule required.
+TECHNIQUE_INFO: dict[str, tuple[str, str]] = {
+    "T1003": ("OS Credential Dumping", "credential-access"),
+    "T1016": ("System Network Configuration Discovery", "discovery"),
+    "T1027": ("Obfuscated Files or Information", "defense-evasion"),
+    "T1055": ("Process Injection", "defense-evasion"),
+    "T1055.004": ("Process Injection: APC Injection", "defense-evasion"),
+    "T1055.012": ("Process Injection: Process Hollowing", "defense-evasion"),
+    "T1056.001": ("Input Capture: Keylogging", "collection"),
+    "T1057": ("Process Discovery", "discovery"),
+    "T1059": ("Command and Scripting Interpreter", "execution"),
+    "T1071": ("Application Layer Protocol", "command-and-control"),
+    "T1071.001": ("Application Layer Protocol: Web Protocols", "command-and-control"),
+    "T1082": ("System Information Discovery", "discovery"),
+    "T1087": ("Account Discovery", "discovery"),
+    "T1095": ("Non-Application Layer Protocol", "command-and-control"),
+    "T1105": ("Ingress Tool Transfer", "command-and-control"),
+    "T1112": ("Modify Registry", "defense-evasion"),
+    "T1113": ("Screen Capture", "collection"),
+    "T1486": ("Data Encrypted for Impact", "impact"),
+    "T1497": ("Virtualization/Sandbox Evasion", "defense-evasion"),
+    "T1543.003": ("Create or Modify System Process: Windows Service", "persistence"),
+    "T1547.001": ("Registry Run Keys / Startup Folder", "persistence"),
+    "T1555": ("Credentials from Password Stores", "credential-access"),
+    "T1622": ("Debugger Evasion", "defense-evasion"),
+}
+
 
 @dataclass
 class AttackMapping:
@@ -60,10 +88,18 @@ def _rules() -> list[_Rule]:
         wanted = {n.lower() for n in names}
 
         def f(it: EvidenceItem) -> bool:
-            sink = str(it.object.get("sink", "")).lower()
-            api = str(it.object.get("api", "")).lower()
-            fn = str(it.object.get("function", "")).lower()
-            return bool({sink, api, fn} & wanted) or any(n in _obj_str(it) for n in wanted)
+            # Exact match on the explicit sink/api/function/import/command fields.
+            fields = {
+                str(it.object.get(k, "")).lower()
+                for k in ("sink", "api", "function", "import", "symbol", "command")
+            }
+            if fields & wanted:
+                return True
+            # Code-preview scan: only match a sink as an actual CALL (`name(`) or a
+            # path token (`/name`) inside decoded code — NOT as a bare substring,
+            # which produced false positives like "system" in "system information".
+            hay = (str(it.object.get("command", "")) + " " + str(it.details.get("decoded_preview", ""))).lower()
+            return any(f"{n}(" in hay or f"/{n}" in hay for n in wanted)
 
         return f
 
@@ -131,9 +167,11 @@ def _rules() -> list[_Rule]:
             "keylogging hook installed: {detail}",
         ),
         _Rule(
+            # Impact is inferred ONLY from the multi-category ransomware heuristic
+            # (common.py), never from a lone encryption API — that misclassified
+            # benign crypto-using backdoors.
             "T1486", "Data Encrypted for Impact", "impact", 0.7,
-            lambda it: has_sink("cryptencrypt", "cryptgenkey")(it)
-            or it.object.get("capability") == "ransomware",
+            lambda it: it.object.get("capability") == "ransomware",
             "encryption / ransomware indicators: {detail}",
         ),
         _Rule(
@@ -171,9 +209,33 @@ def map_evidence(store: EvidenceStore) -> list[AttackMapping]:
     rules = _rules()
     agg: dict[str, AttackMapping] = {}
     prov: dict[str, list[str]] = {}  # technique_id -> contributing provenances
+    def _emit(tid: str, name: str, tactic: str, conf: float, why: str, it: EvidenceItem) -> None:
+        prov.setdefault(tid, []).append(provenance_of(it.source, it.confidence))
+        existing = agg.get(tid)
+        if existing is None:
+            agg[tid] = AttackMapping(tid, name, tactic, conf, why, [it.id])
+        else:
+            existing.evidence_ids.append(it.id)
+            existing.confidence = round(min(0.99, max(existing.confidence, conf) + 0.03), 3)
+            detail_key = why.split(":", 1)[-1].strip()
+            if detail_key not in existing.why and existing.why.count("; ") < _WHY_MAX_CLAUSES:
+                existing.why += f"; {why}"
+
     for it in store:
         item_prov = provenance_of(it.source, it.confidence)
+        # Generic attack-hint path: any analyzer can attribute a technique by
+        # setting details.attack_hint, without a bespoke rule here.
+        hint = it.details.get("attack_hint")
+        if isinstance(hint, str) and hint in TECHNIQUE_INFO:
+            name, tactic = TECHNIQUE_INFO[hint]
+            why = it.details.get("why") or _detail_for(it)
+            conf = round(min(0.99, 0.7 * (0.5 + 0.5 * it.confidence)), 3)
+            _emit(hint, name, tactic, conf, f"{name}: {why}", it)
         for rule in rules:
+            # Avoid double-counting an item that already attributed this technique
+            # via its explicit attack_hint.
+            if it.details.get("attack_hint") == rule.technique_id:
+                continue
             try:
                 if not rule.match(it):
                     continue

@@ -64,8 +64,8 @@ def test_ransomware_indicators_map_to_impact(temp_config):
     assert "ransomware" in store_caps
     assert "inhibit_recovery" in store_caps
 
-    recovery, strong, weak = ransomware_scan(data)
-    assert recovery and strong  # has shadow-deletion + a strong ransom tell
+    recovery, cats = ransomware_scan(data)
+    assert recovery and cats.get("family")  # shadow-deletion + a family marker
 
     # and they surface as ATT&CK Impact techniques
     from sandworm.core.evidence import EvidenceStore

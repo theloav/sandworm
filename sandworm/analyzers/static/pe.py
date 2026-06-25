@@ -18,18 +18,55 @@ from ...core.sample import Sample
 from ..base import BaseAnalyzer, Context
 from .common import shannon_entropy
 
-# Imports commonly associated with injection / process manipulation. Used to emit
-# capability hints even without capa.
+# Imports mapped to ATT&CK. Used to emit capability hints even without capa.
+# (Confidence is deliberately modest — a single import is a capability, not proof.)
 _SUSPECT_IMPORTS = {
+    # Process injection
     "VirtualAllocEx": ("T1055", "process injection primitive (alloc in remote process)", 0.6),
     "WriteProcessMemory": ("T1055", "writes to another process's memory", 0.7),
     "CreateRemoteThread": ("T1055", "starts a thread in a remote process", 0.75),
+    "QueueUserAPC": ("T1055.004", "APC injection primitive", 0.6),
     "NtUnmapViewOfSection": ("T1055.012", "process hollowing primitive", 0.7),
+    "SetThreadContext": ("T1055.012", "process hollowing (hijack thread context)", 0.55),
+    # Collection / capture
     "SetWindowsHookEx": ("T1056.001", "keylogging hook", 0.5),
-    "RegSetValueEx": ("T1547.001", "registry persistence write", 0.4),
+    "GetAsyncKeyState": ("T1056.001", "polling keystroke capture", 0.45),
+    "BitBlt": ("T1113", "screen capture primitive", 0.4),
+    # Persistence
+    "RegSetValueEx": ("T1547.001", "registry run-key persistence write", 0.4),
+    "RegCreateKey": ("T1112", "registry modification", 0.3),
+    "CreateService": ("T1543.003", "Windows service persistence", 0.55),
+    "OpenSCManager": ("T1543.003", "service control (persistence/lateral)", 0.4),
+    "SHGetFolderPath": ("T1547.001", "startup-folder persistence path lookup", 0.3),
+    # C2 / network
     "InternetOpen": ("T1071.001", "HTTP C2 capability", 0.4),
+    "InternetOpenUrl": ("T1071.001", "HTTP request capability", 0.45),
     "WinHttpOpen": ("T1071.001", "HTTP C2 capability", 0.4),
-    "CryptEncrypt": ("T1486", "encryption capability (possible ransomware)", 0.3),
+    "URLDownloadToFile": ("T1105", "ingress tool transfer (download)", 0.6),
+    "WSAStartup": ("T1095", "raw socket networking", 0.35),
+    "connect": ("T1071", "outbound connection capability", 0.35),
+    # Discovery
+    "GetComputerName": ("T1082", "system information discovery", 0.35),
+    "GetSystemInfo": ("T1082", "system information discovery", 0.35),
+    "Process32First": ("T1057", "process discovery", 0.45),
+    "GetAdaptersInfo": ("T1016", "network configuration discovery", 0.4),
+    "NetUserEnum": ("T1087", "account discovery", 0.45),
+    # Defense evasion / anti-analysis
+    "IsDebuggerPresent": ("T1622", "debugger detection (anti-analysis)", 0.45),
+    "CheckRemoteDebuggerPresent": ("T1622", "debugger detection (anti-analysis)", 0.5),
+    "GetTickCount": ("T1497", "timing-based sandbox evasion", 0.25),
+    "VirtualProtect": ("T1027", "runtime memory protection change (unpacking)", 0.35),
+    # Credential access
+    "LsaRetrievePrivateData": ("T1003", "LSA secrets access", 0.6),
+    "CredEnumerate": ("T1555", "credential store access", 0.5),
+    # Execution
+    "WinExec": ("T1059", "command execution", 0.5),
+    "ShellExecute": ("T1059", "command execution", 0.5),
+    "CreateProcess": ("T1059", "process creation/execution", 0.4),
+    # NOTE: a lone encryption API (CryptEncrypt/CryptGenKey) is NOT mapped to
+    # T1486 — encryption is ubiquitous in benign software. Ransomware impact is
+    # only inferred by the multi-category heuristic in common.py (family marker,
+    # ransom note + extension + shadow-copy deletion).
 }
 
 
