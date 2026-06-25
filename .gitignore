@@ -1,0 +1,16 @@
+# SANDWORM runtime artifacts
+.sandworm/
+*.pyc
+__pycache__/
+.venv/
+.env
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+
+# Never commit real samples or generated reports
+/samples/real/
+*.report.html

@@ -1,0 +1,51 @@
+# Isolated detonation environments + simulated network responder.
+#
+# This stack is the STARTING POINT for the dynamic lane. The detonation services
+# carry the SANDWORM_ISOLATED marker and are attached ONLY to an internal network
+# whose sole reachable host is the FakeNet/INetSim responder. There is NO route to
+# a real network. Tear down and recreate per run (ephemeral).
+#
+#   docker compose up -d
+#
+# NOTE: the *_runner images are placeholders — replace with your hardened images
+# (seccomp profiles, read-only rootfs, no-new-privileges, dropped capabilities).
+
+services:
+  simnet:
+    # Simulated-network responder (INetSim/FakeNet-style). Answers DNS/HTTP/etc.
+    image: inetsim/inetsim:latest
+    networks:
+      detonation:
+        ipv4_address: 10.0.0.1
+    restart: "no"
+
+  php_runner:
+    image: php:8.3-cli
+    environment:
+      SANDWORM_ISOLATED: "1"
+      SANDWORM_SIMNET: "10.0.0.1"
+      http_proxy: "http://10.0.0.1:8080"
+    networks: [detonation]            # internal only — no default bridge
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    command: ["sleep", "infinity"]
+
+  linux_runner:
+    image: debian:stable-slim
+    environment:
+      SANDWORM_ISOLATED: "1"
+      SANDWORM_SIMNET: "10.0.0.1"
+    networks: [detonation]
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    command: ["sleep", "infinity"]
+
+networks:
+  detonation:
+    driver: bridge
+    internal: true                    # CRITICAL: no egress to a real network
+    ipam:
+      config:
+        - subnet: 10.0.0.0/24

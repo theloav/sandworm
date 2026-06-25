@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sandworm"
+version = "0.1.0"
+description = "SANDWORM — isolated, multi-format malware reverse-engineering platform. Reconstruct what happened, explain why, emit detections."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "SANDWORM" }]
+dependencies = [
+    "pydantic>=2.5",
+    "typer>=0.9",
+    "jinja2>=3.1",
+]
+
+[project.optional-dependencies]
+# Heavy / environment-specific backends are optional. The pipeline degrades
+# gracefully when they are absent so the synthetic demos and CI run offline.
+static = ["lief>=0.14", "pefile>=2023.2.7", "pyelftools>=0.30", "capstone>=5.0", "oletools>=0.60"]
+graph = ["neo4j>=5.14"]
+dynamic = []
+memory = ["volatility3>=2.5"]
+web = ["fastapi>=0.110", "uvicorn>=0.27"]
+llm = ["anthropic>=0.25", "openai>=1.30"]
+dev = ["pytest>=8.0", "ruff>=0.4", "mypy>=1.9"]
+
+[project.scripts]
+sandworm = "sandworm.cli:app"
+
+[tool.setuptools.packages.find]
+include = ["sandworm*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501", "B008"]  # B008: typer uses function calls in defaults by design
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+warn_unused_ignores = false
+no_implicit_optional = true
+check_untyped_defs = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
