@@ -72,6 +72,14 @@ def _ingest_recorded_reports(
         store.extend(items)
         ran.append("dynamic.windows.cape(replay)")
         notes.append(f"ingested recorded dynamic report ({len(items)} events; replay — no live detonation)")
+        # The CAPE adapter normalizes a Windows/PE sandbox run. Ingesting it for a
+        # non-PE sample (a PHP shell, an ELF, a script) means the runtime evidence
+        # does NOT belong to this file — flag it so the report isn't read as truth.
+        if sample.format_hint not in {"pe", "dll", "unknown", ""}:
+            notes.append(
+                f"⚠ the recorded dynamic report is Windows/PE-oriented but this sample is '{sample.format_hint}' — "
+                "its runtime evidence does not correspond to this file; treat the Runtime section as a mismatched demo"
+            )
         audit.log(run_id=run_id, action="ingest_dynamic_report", source="dynamic.windows.cape",
                   sample_hash=sample.sha256, events=len(items), path=str(cape_report))
     if memory_report and Path(memory_report).exists():

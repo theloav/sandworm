@@ -179,6 +179,7 @@ _TEMPLATE = """<!DOCTYPE html>
 
 <section id="runtime">
  <h2>Runtime behaviour {% if not runtime.observed %}<span class="muted">— pending</span>{% endif %}</h2>
+ {% if runtime_mismatch %}<div class="banner" style="border-left-color:#f85149"><b>⚠ Mismatched runtime evidence.</b> The ingested dynamic/memory report is from a <b>Windows/PE</b> sandbox run, but this sample is <b>{{ fmt }}</b>. The events below describe a <i>different</i> binary and are shown for demonstration only — they are <b>not</b> this file's behaviour. Provide a {{ fmt }}-appropriate report (or run static-only) for an accurate runtime section.</div>{% endif %}
  {% if runtime.observed %}
  <p class="muted">Observed during detonation / recovered from memory. These are <b>real events</b> (standing: observed), which upgrade the matching ATT&amp;CK techniques from inferred → observed.</p>
  <h3>Process tree</h3>
@@ -720,6 +721,10 @@ def render_html(inp: ReportInputs) -> str:
     from ..reconstruct.runtime import build_runtime_view
 
     runtime = build_runtime_view(inp.store)
+    # A Windows/PE sandbox report ingested for a non-PE sample describes a
+    # different binary — warn so the runtime section is not read as this file's.
+    _win_runtime = any(it.source == "dynamic.windows.cape" or it.source == "memory.vol3" for it in inp.store)
+    runtime_mismatch = bool(runtime.observed and _win_runtime and inp.fmt not in {"pe", "dll", "unknown", "(replayed)", ""})
     proc_tree = [
         type("PT", (), {
             "name": escape(n.name),
@@ -758,6 +763,7 @@ def render_html(inp: ReportInputs) -> str:
         evidence_classes=evidence_classes,
         evidence_weights=evidence_weights,
         runtime=runtime,
+        runtime_mismatch=runtime_mismatch,
         proc_tree=proc_tree,
         graph_legend=_GRAPH_LEGEND,
         readiness_level=readiness_level,

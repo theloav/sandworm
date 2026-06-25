@@ -151,6 +151,41 @@ def test_score_factors_credit_distinct_capability_axes():
     assert summary.maliciousness_score >= 35  # credited for real capability, not stuck at a floor
 
 
+def test_score_uses_diminishing_returns_not_a_flat_ceiling(samples_dir):
+    # Two different samples with the same replayed evidence must NOT both pin to
+    # 100 — the diminishing-returns curve keeps the high band differentiating.
+    rep = dict(cape_report=str(samples_dir / "recorded_cape_report.json"),
+               memory_report=str(samples_dir / "recorded_vol3_report.json"))
+    php = analyze_sample(Sample.from_path(samples_dir / "benign_webshell.php"), enable_dynamic=False, **rep)
+    sh = analyze_sample(Sample.from_path(samples_dir / "benign_dropper.sh"), enable_dynamic=False, **rep)
+    s_php = build_summary(php.store, php.mappings, php.phases, isolated=False)
+    s_sh = build_summary(sh.store, sh.mappings, sh.phases, isolated=False)
+    assert s_php.maliciousness_score != s_sh.maliciousness_score   # they differentiate
+    assert s_php.maliciousness_score <= 100
+    # the compression is shown as an explicit factor when it kicks in
+    assert any("Diminishing returns" in label for label, _ in s_php.score_factors)
+    # and the factor column still sums to the displayed score
+    assert sum(p for _, p in s_php.score_factors) == s_php.maliciousness_score
+
+
+def test_low_scores_are_untouched_by_diminishing_returns():
+    # A single-capability sample sits below the knee, so its score is unchanged
+    # and carries no diminishing-returns factor.
+    store = EvidenceStore()
+    store.append(EvidenceItem(run_id="r", source="static.pe", artifact="api_call", operation="resolve",
+                 subject={"a": "x"}, object={"import": "WriteProcessMemory"}, details={"why": "x"}, confidence=0.7))
+    summary = build_summary(store, map_evidence(store), build_narrative(map_evidence(store)), isolated=False)
+    assert not any("Diminishing returns" in label for label, _ in summary.score_factors)
+
+
+def test_mismatched_windows_report_on_php_is_flagged(samples_dir):
+    result = analyze_sample(
+        Sample.from_path(samples_dir / "benign_webshell.php"), enable_dynamic=False,
+        cape_report=str(samples_dir / "recorded_cape_report.json"),
+    )
+    assert any("does not correspond to this file" in n for n in result.notes)
+
+
 def test_family_attribution_is_medium_when_static_only():
     store = EvidenceStore()
     store.append(EvidenceItem(run_id="r", source="static.pe", artifact="string", operation="read",

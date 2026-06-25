@@ -8,6 +8,7 @@ mistaken for a confirmed detonation.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 from ..core.evidence import EvidenceStore
@@ -246,15 +247,31 @@ def _maliciousness(store: EvidenceStore, mappings: list[AttackMapping], net: int
     axis(family != "unknown", "family", f"Family fingerprint ({family})", standing="inferred")
 
     raw = sum(p for _, p in factors)
+    # Diminishing returns: once a sample stacks several strong capabilities the
+    # extra points are real but redundant. A flat additive sum blows past 100 and
+    # everything pins to the ceiling, losing all differentiation in the high band.
+    # So we leave low/mid scores untouched and asymptotically compress only the
+    # top, surfaced as an explicit (negative) factor so the table still sums.
+    if raw > _DR_KNEE:
+        compressed = round(_DR_KNEE + (100 - _DR_KNEE) * (1 - math.exp(-(raw - _DR_KNEE) / _DR_SCALE)))
+        factors.append(("Diminishing returns (overlapping capabilities)", compressed - raw))
+    else:
+        compressed = raw
     # Static analysis alone can never fully confirm malice -> cap below 100 and
     # show the caveat as an explicit negative factor.
     observed = any(provenance_observed(it) for it in store)
     if not observed and factors:
         factors.append(("No runtime confirmation (static only)", -4))
-        score = max(0, min(96, raw - 4))
+        score = max(0, min(96, compressed - 4))
     else:
-        score = min(100, raw)
+        score = min(100, compressed)
     return score, factors
+
+
+# Maliciousness diminishing-returns curve: scores at/below the knee are additive
+# and untouched; above it, extra capability is compressed and approaches 100.
+_DR_KNEE = 80
+_DR_SCALE = 40
 
 
 def provenance_observed(it) -> bool:
