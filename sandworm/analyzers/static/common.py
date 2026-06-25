@@ -18,7 +18,10 @@ _ASCII_RE = re.compile(rb"[\x20-\x7e]{4,}")
 
 # IOC patterns. fp_risk is a qualitative false-positive risk for the IOC type.
 _IOC_PATTERNS = {
-    "url": (re.compile(r"\bhttps?://[^\s'\"<>)]+", re.IGNORECASE), 0.7, "low"),
+    # URL: restrict to URL-valid characters so a match in a binary stops at the
+    # first non-URL byte (NUL / 0xFFFD replacement char) instead of swallowing
+    # trailing garbage (e.g. the WannaCry killswitch URL grabbing mojibake).
+    "url": (re.compile(r"\bhttps?://[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+"), 0.7, "low"),
     "domain": (
         re.compile(r"\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}\b", re.IGNORECASE),
         0.45,
@@ -89,9 +92,18 @@ def extract_iocs(text: str) -> list[tuple[str, str, float, str]]:
         for m in pat.finditer(text):
             val = m.group()
             if kind == "domain":
-                # Must end in a real public TLD — this rejects JS member access
+                labels = val.split(".")
+                # Must end in a real public TLD — rejects JS member access
                 # (`a.onclick`), object paths (`d.msg`), and filenames (`x.jpg`).
-                if val.rsplit(".", 1)[-1].lower() not in _COMMON_TLDS:
+                if labels[-1].lower() not in _COMMON_TLDS:
+                    continue
+                # The second-level label must be >=3 chars. This kills the
+                # `<garbage>.<ccTLD>` fragments scraped out of a TLD/country table
+                # embedded in a binary (`M.Co`, `ax.iD`, `7.HK`, `g.RO`, ...),
+                # which are real TLDs preceded by one or two stray characters.
+                # Trade-off: drops a few legit 1-2 char domains (t.co); acceptable
+                # for malware IOC extraction. URL hosts are exempt (kept below).
+                if len(labels[-2]) < 3 and val.lower() not in url_hosts:
                     continue
                 if val.lower() in _DOMAIN_ALLOWLIST or val.lower() in url_hosts:
                     continue
@@ -111,6 +123,26 @@ _BUNDLED_HEURISTICS = [
     ("reverse_shell_sh", [b"/dev/tcp/"], 0.75),
     ("download_exec", [b"curl", b"| sh"], 0.5),
 ]
+
+
+# Ransomware tells. Shadow-copy / recovery deletion is extremely high-signal
+# (almost never in goodware) → Inhibit System Recovery. Ransom-note + crypto
+# tooling language → Data Encrypted for Impact. Format-agnostic: works on a PE
+# even when the import table is dynamically resolved (as WannaCry's is).
+_RECOVERY_INHIBIT = [b"vssadmin", b"wbadmin", b"bcdedit", b"shadowcopy", b"wmic shadow"]
+_RANSOM_INDICATORS = [
+    b".wnry", b"wanacry", b"wncry", b"wanadecryptor", b".onion",
+    b"your files", b"files have been encrypted", b"files are encrypted",
+    b"decrypt", b"bitcoin", b"ransom", b"how to recover", b".locky", b".crypt",
+]
+
+
+def ransomware_scan(data: bytes) -> tuple[list[str], list[str]]:
+    """Return (recovery_inhibit_hits, ransom_indicator_hits)."""
+    low = data.lower()
+    recovery = [s.decode() for s in _RECOVERY_INHIBIT if s in low]
+    ransom = [s.decode() for s in _RANSOM_INDICATORS if s in low]
+    return recovery, ransom
 
 
 def yara_scan(data: bytes) -> list[tuple[str, float]]:
@@ -166,7 +198,12 @@ class CommonAnalyzer(BaseAnalyzer):
         )
 
         strings = extract_strings(data)
-        text_for_ioc = sample.text if sample.size < 5_000_000 else "\n".join(strings)
+        # For binary formats, run IOC extraction over the EXTRACTED STRINGS, not a
+        # lossy whole-file decode. Strings are split on non-printable bytes, so a
+        # URL/domain never bleeds into adjacent binary noise (which is what tacked
+        # mojibake onto the WannaCry killswitch URL).
+        binary_like = (sample.format_hint or "") in {"pe", "elf", "macho", "office", "generic"}
+        text_for_ioc = "\n".join(strings) if (binary_like or sample.size >= 5_000_000) else sample.text
         for kind, val, conf, fp in extract_iocs(text_for_ioc):
             items.append(
                 ctx.ev(
@@ -177,6 +214,36 @@ class CommonAnalyzer(BaseAnalyzer):
                     object={"kind": kind, "value": val},
                     details={"ioc": True, "false_positive_risk": fp},
                     confidence=conf,
+                    evidence_refs=[ref],
+                )
+            )
+
+        # Ransomware heuristics (format-agnostic, intent-level).
+        recovery, ransom = ransomware_scan(data)
+        if recovery:
+            items.append(
+                ctx.ev(
+                    source="static.common",
+                    artifact="process",
+                    operation="exec",
+                    subject={"analyzer": self.name},
+                    object={"capability": "inhibit_recovery", "indicators": recovery},
+                    details={"why": "shadow-copy / backup deletion tooling present (ransomware tell)"},
+                    confidence=0.8,
+                    evidence_refs=[ref],
+                )
+            )
+        # Require >=2 distinct ransom indicators to avoid firing on a stray word.
+        if len(ransom) >= 2:
+            items.append(
+                ctx.ev(
+                    source="static.common",
+                    artifact="file",
+                    operation="write",
+                    subject={"analyzer": self.name},
+                    object={"capability": "ransomware", "indicators": ransom},
+                    details={"why": "ransom-note / encryption-tool language present", "indicator_count": len(ransom)},
+                    confidence=min(0.95, 0.55 + 0.1 * len(ransom)),
                     evidence_refs=[ref],
                 )
             )

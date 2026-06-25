@@ -129,9 +129,16 @@ def _rules() -> list[_Rule]:
             "keylogging hook installed: {detail}",
         ),
         _Rule(
-            "T1486", "Data Encrypted for Impact", "impact", 0.5,
-            lambda it: has_sink("cryptencrypt")(it),
-            "bulk encryption capability: {detail}",
+            "T1486", "Data Encrypted for Impact", "impact", 0.7,
+            lambda it: has_sink("cryptencrypt", "cryptgenkey")(it)
+            or it.object.get("capability") == "ransomware",
+            "encryption / ransomware indicators: {detail}",
+        ),
+        _Rule(
+            "T1490", "Inhibit System Recovery", "impact", 0.85,
+            lambda it: it.object.get("capability") == "inhibit_recovery"
+            or has_sink("vssadmin", "wbadmin", "bcdedit")(it),
+            "shadow-copy / backup deletion: {detail}",
         ),
         _Rule(
             "T1552.001", "Credentials In Files", "credential-access", 0.85,

@@ -10,9 +10,10 @@ an embedded HTML/JS admin panel):
 from __future__ import annotations
 
 from sandworm.analyzers.base import Context
-from sandworm.analyzers.static.common import extract_iocs
+from sandworm.analyzers.static.common import CommonAnalyzer, extract_iocs, ransomware_scan
 from sandworm.analyzers.static.php import PhpAnalyzer
 from sandworm.core.sample import Sample
+from sandworm.reconstruct.attack_map import map_evidence
 
 
 def test_js_member_access_not_flagged_as_domain():
@@ -33,6 +34,46 @@ def test_real_domains_and_urls_survive():
     assert ("domain", "sayangkamu.id") in kinds
     # the image *filename* is not a domain
     assert not any(k == "domain" and v == "seo1719.jpg" for k, v in kinds)
+
+
+def test_tld_table_fragments_not_flagged_as_domains():
+    # A TLD/country table embedded in a binary previously produced `M.Co`,
+    # `ax.iD`, `7.HK` ... (real ccTLDs preceded by 1-2 stray chars).
+    blob = "COM.NET.M.CO.ID.HK.MY.RO.PE.UK.A.Ae.As.Se"
+    domains = {v for kind, v, _c, _fp in extract_iocs(blob) if kind == "domain"}
+    assert domains == set(), f"TLD-table fragments leaked: {domains}"
+
+
+def test_url_does_not_swallow_trailing_binary():
+    # The WannaCry killswitch URL grabbed mojibake when decoded with errors=replace.
+    text = "http://www.iuqerfsodp9ifjaposdfjhgosurijfaewrwergwea.com�� more"
+    urls = [v for kind, v, _c, _fp in extract_iocs(text) if kind == "url"]
+    assert "http://www.iuqerfsodp9ifjaposdfjhgosurijfaewrwergwea.com" in urls
+    assert all("�" not in u for u in urls)
+
+
+def test_ransomware_indicators_map_to_impact(temp_config):
+    data = (
+        b"MZ" + b"\x00" * 64 + b"vssadmin delete shadows /all\x00bcdedit /set\x00"
+        b".wnry\x00Your files have been encrypted\x00bitcoin\x00@WanaDecryptor@\x00"
+    )
+    sample = Sample.from_bytes("wc.bin", data)
+    sample.format_hint = "pe"
+    items = CommonAnalyzer().analyze(sample, Context(run_id="t", config=temp_config))
+    store_caps = {i.object.get("capability") for i in items}
+    assert "ransomware" in store_caps
+    assert "inhibit_recovery" in store_caps
+
+    recovery, ransom = ransomware_scan(data)
+    assert recovery and len(ransom) >= 2
+
+    # and they surface as ATT&CK Impact techniques
+    from sandworm.core.evidence import EvidenceStore
+
+    store = EvidenceStore()
+    store.extend(items)
+    tids = {m.technique_id for m in map_evidence(store)}
+    assert {"T1486", "T1490"} <= tids
 
 
 def test_cleartext_webshell_verdict(temp_config):
