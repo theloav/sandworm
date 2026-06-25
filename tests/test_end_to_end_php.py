@@ -46,8 +46,10 @@ def test_end_to_end_php(temp_config, samples_dir):
 
     # report renders, self-contained, no external resources loaded at render time
     html = render_html(build_report_inputs(result))
-    for needle in ("Attack narrative", "Behavioral graph", "ATT&amp;CK", "Deobfuscation", "Detection coverage", "<svg"):
+    for needle in ("Executive summary", "Execution status", "Behavioral graph", "ATT&amp;CK", "Deobfuscation", "Detection coverage", "<svg"):
         assert needle in html
+    # Epistemic honesty: a static-only run must not claim runtime was observed.
+    assert "Runtime observed: <b>No</b>" in html
     assert "<script" not in html
     assert 'src="http' not in html and 'href="http' not in html
 

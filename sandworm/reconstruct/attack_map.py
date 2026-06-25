@@ -13,6 +13,7 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass
 
 from ..core.evidence import EvidenceItem, EvidenceStore
+from ..core.provenance import INFERRED, provenance_of, strongest
 
 # Cap how many distinct observations are spelled out in a mapping's "why".
 _WHY_MAX_CLAUSES = 6
@@ -34,6 +35,7 @@ class AttackMapping:
     confidence: float
     why: str
     evidence_ids: list[str]
+    status: str = INFERRED  # observed | inferred | speculative
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -149,6 +151,11 @@ def _rules() -> list[_Rule]:
 
 
 def _detail_for(it: EvidenceItem) -> str:
+    # Surface the concrete indicators behind capability findings (e.g. ransomware)
+    # so the "why" is transparent rather than just "capability=ransomware".
+    if it.object.get("indicators"):
+        inds = it.object["indicators"]
+        return f"{it.object.get('capability', 'indicators')}: {', '.join(map(str, inds[:6]))}"
     for key in ("sink", "api", "import", "symbol", "function", "command", "value", "key", "host", "verdict", "capability", "yara_rule"):
         if key in it.object:
             return f"{key}={it.object[key]}"
@@ -158,10 +165,14 @@ def _detail_for(it: EvidenceItem) -> str:
 
 
 def map_evidence(store: EvidenceStore) -> list[AttackMapping]:
-    """Produce ATT&CK mappings, one per (technique) with aggregated evidence."""
+    """Produce ATT&CK mappings, one per technique, with aggregated evidence and
+    an epistemic ``status`` (observed/inferred/speculative) derived from which
+    lanes the backing evidence came from."""
     rules = _rules()
     agg: dict[str, AttackMapping] = {}
+    prov: dict[str, list[str]] = {}  # technique_id -> contributing provenances
     for it in store:
+        item_prov = provenance_of(it.source, it.confidence)
         for rule in rules:
             try:
                 if not rule.match(it):
@@ -172,6 +183,7 @@ def map_evidence(store: EvidenceStore) -> list[AttackMapping]:
             why = rule.why_tmpl.format(detail=detail)
             # Combine confidence: take max of evidence confidence * rule base.
             conf = round(min(0.99, rule.base_conf * (0.5 + 0.5 * it.confidence) + 0.0), 3)
+            prov.setdefault(rule.technique_id, []).append(item_prov)
             existing = agg.get(rule.technique_id)
             if existing is None:
                 agg[rule.technique_id] = AttackMapping(
@@ -191,6 +203,8 @@ def map_evidence(store: EvidenceStore) -> list[AttackMapping]:
                 # wall of text. (evidence_ids still record every backing item.)
                 if detail not in existing.why and existing.why.count("; ") < _WHY_MAX_CLAUSES:
                     existing.why += f"; {why}"
+    for tid, mapping in agg.items():
+        mapping.status = strongest(prov.get(tid, []))
     # Stable order: by tactic order then technique id.
     order = {t: i for i, t in enumerate(TACTICS)}
     out = sorted(agg.values(), key=lambda m: (order.get(m.tactic, 99), m.technique_id))

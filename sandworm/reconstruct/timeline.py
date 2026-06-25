@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ..core.evidence import EvidenceStore
+from ..core.provenance import OBSERVED, provenance_of
 
 
 @dataclass
@@ -20,9 +21,10 @@ class TimelineEntry:
     text: str
     confidence: float
     evidence_id: str
+    status: str = "inferred"  # observed | inferred | speculative
 
 
-def _describe(it) -> str:
+def _describe(it, status: str) -> str:
     obj = it.object
     target = (
         obj.get("sink")
@@ -32,21 +34,37 @@ def _describe(it) -> str:
         or obj.get("key")
         or obj.get("function")
         or obj.get("verdict")
+        or obj.get("capability")
         or obj.get("command")
         or obj.get("layer")
         or it.artifact
     )
-    verb = {
-        "decode": "decoded layer",
-        "exec": "executed/flagged sink",
-        "connect": "network egress to",
-        "write": "wrote",
-        "read": "read",
-        "spawn": "spawned",
-        "inject": "injected into",
-        "create": "created",
-        "resolve": "resolved/imported",
-    }.get(it.operation, it.operation)
+    if status == OBSERVED:
+        # Runtime/memory: these are real events.
+        verb = {
+            "exec": "executed",
+            "connect": "connected to",
+            "write": "wrote",
+            "read": "read",
+            "spawn": "spawned",
+            "inject": "injected into",
+            "create": "created",
+            "decode": "decoded",
+            "resolve": "resolved",
+        }.get(it.operation, it.operation)
+    else:
+        # Static: these are findings/capabilities, NOT observed events. Phrase
+        # them as such so the timeline never implies the sample ran.
+        verb = {
+            "decode": "static: de-obfuscated layer",
+            "exec": "static indicator: execution-capable sink",
+            "connect": "static indicator: network capability",
+            "write": "static indicator: file-write/encryption capability",
+            "read": "static indicator",
+            "resolve": "static indicator",
+            "create": "static indicator",
+            "inject": "static indicator: injection-capable API",
+        }.get(it.operation, f"static: {it.operation}")
     return f"[{it.source}] {verb} {target}"
 
 
@@ -60,14 +78,16 @@ def build_timeline(store: EvidenceStore) -> list[TimelineEntry]:
         pass
     out: list[TimelineEntry] = []
     for seq, (_orig, it) in enumerate(indexed):
+        status = provenance_of(it.source, it.confidence)
         out.append(
             TimelineEntry(
                 seq=seq,
                 ts=it.ts,
                 source=it.source,
-                text=_describe(it),
+                text=_describe(it, status),
                 confidence=it.confidence,
                 evidence_id=it.id,
+                status=status,
             )
         )
     return out

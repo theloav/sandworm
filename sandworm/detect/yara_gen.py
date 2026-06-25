@@ -90,9 +90,41 @@ def _candidate_strings(store: EvidenceStore, sample: Sample) -> list[bytes]:
     if len(cands) < 2:
         for tok in re.findall(rb"[A-Za-z0-9_]{12,40}", sample.data)[:10]:
             cands.add(tok)
-    # prefer longer, more specific strings
-    ordered = sorted(cands, key=lambda b: (-len(b), b))
+    # Rank by specificity: family/IOC-like anchors first, generic Windows API
+    # names last. A rule built from `InitializeCriticalSection`-style imports
+    # would match half of goodware; family constants and embedded URLs/paths are
+    # what actually identify the sample.
+    ordered = sorted(cands, key=lambda b: (-_specificity(b), -len(b), b))
     return ordered[:12]
+
+
+# Ubiquitous Windows API / CRT names — present in vast numbers of benign PEs, so
+# they are weak rule anchors on their own.
+_GENERIC_API = {
+    b"initializecriticalsection", b"entercriticalsection", b"leavecriticalsection",
+    b"deletecriticalsection", b"queryperformancecounter", b"queryperformancefrequency",
+    b"interlockedincrement", b"interlockeddecrement", b"waitforsingleobject",
+    b"gettickcount", b"getcurrentprocess", b"getcurrentthreadid", b"terminatethread",
+    b"getlasterror", b"setlasterror", b"getmodulehandlea", b"getprocaddress",
+    b"loadlibrarya", b"getcommandlinea", b"getstartupinfoa", b"virtualalloc",
+    b"virtualfree", b"heapalloc", b"heapfree", b"multibytetowidechar",
+    b"widechartomultibyte", b"getsystemtimeasfiletime", b"unhandledexceptionfilter",
+}
+
+
+def _specificity(s: bytes) -> int:
+    """Higher = a stronger, more identifying YARA anchor."""
+    low = s.lower()
+    if low in _GENERIC_API:
+        return 0
+    score = 1
+    if any(m in low for m in (b"http://", b"https://", b".onion", b"\\", b"/", b".wnry", b"@")):
+        score += 3  # embedded URL / path / family marker
+    if not any(low == g for g in _GENERIC_API) and (b"_" in low or len(s) >= 20):
+        score += 1
+    if low.endswith((b"dll", b"exe")) and len(s) > 8:
+        score += 1
+    return score
 
 
 def generate_yara(store: EvidenceStore, sample: Sample, *, clean_corpus: list[bytes] | None = None) -> list[YaraRule]:

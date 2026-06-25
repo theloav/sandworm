@@ -76,6 +76,31 @@ def extract_strings(data: bytes, min_len: int = 4) -> list[str]:
     return [m.group().decode("ascii", "replace") for m in _ASCII_RE.finditer(data) if len(m.group()) >= min_len]
 
 
+def _is_routable_ipv4(val: str) -> bool:
+    """Reject version-number / bogon / reserved IPv4 that masquerade as IOCs
+    (e.g. ``6.0.0.0`` is a version string, not a C2). Only public-looking
+    addresses survive."""
+    try:
+        octets = [int(x) for x in val.split(".")]
+    except ValueError:
+        return False
+    if len(octets) != 4 or any(o < 0 or o > 255 for o in octets):
+        return False
+    a, b, c, d = octets
+    # x.0.0.0 / x.255.255.255 look like version strings or broadcast, not hosts
+    if (b, c, d) in {(0, 0, 0), (255, 255, 255)}:
+        return False
+    if a in (0, 10, 127) or a >= 224:  # this-net, RFC1918-10, loopback, multicast/reserved
+        return False
+    if a == 169 and b == 254:  # link-local
+        return False
+    if a == 172 and 16 <= b <= 31:  # RFC1918-172
+        return False
+    if a == 192 and b == 168:  # RFC1918-192
+        return False
+    return True
+
+
 def extract_iocs(text: str) -> list[tuple[str, str, float, str]]:
     """Return (kind, value, confidence, fp_risk)."""
     out: list[tuple[str, str, float, str]] = []
@@ -107,6 +132,8 @@ def extract_iocs(text: str) -> list[tuple[str, str, float, str]]:
                     continue
                 if val.lower() in _DOMAIN_ALLOWLIST or val.lower() in url_hosts:
                     continue
+            if kind == "ipv4" and not _is_routable_ipv4(val):
+                continue
             key = (kind, val)
             if key in seen:
                 continue

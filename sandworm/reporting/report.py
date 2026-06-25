@@ -19,9 +19,12 @@ from ..core.evidence import EvidenceStore
 from ..detect.sigma_gen import SigmaRule
 from ..detect.yara_gen import YaraRule
 from ..reconstruct.attack_map import AttackMapping
-from ..reconstruct.narrative import Phase, furthest_phase
+from ..reconstruct.narrative import (
+    Phase,
+)
 from ..reconstruct.timeline import TimelineEntry
 from ..reporting.coverage import CoverageReport
+from ..reporting.summary import build_summary
 
 _TEMPLATE = """<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8">
@@ -47,6 +50,15 @@ _TEMPLATE = """<!DOCTYPE html>
  .layer{border-left:3px solid #1f6feb;padding-left:10px;margin:8px 0}
  .muted{color:#8b949e;font-size:12px}
  svg{background:#161b22;border:1px solid #30363d;border-radius:6px;width:100%;height:auto}
+ .badge{display:inline-block;border-radius:4px;padding:1px 7px;font-size:11px;font-weight:bold;text-transform:uppercase;letter-spacing:.3px}
+ .b-obs{background:#23863633;border:1px solid #238636;color:#7ee787}
+ .b-inf{background:#9e6a0322;border:1px solid #d29922;color:#e3b341}
+ .b-spec{background:#6e768122;border:1px solid #6e7681;color:#8b949e}
+ .summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin-top:8px}
+ .card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:12px 14px}
+ .card .k{color:#8b949e;font-size:11px;text-transform:uppercase;letter-spacing:.4px}
+ .card .v{font-size:16px;color:#e6edf3;margin-top:3px}
+ .banner{background:#161b22;border:1px solid #30363d;border-left:4px solid #f0883e;border-radius:6px;padding:12px 16px;margin-top:10px}
 </style></head>
 <body>
 <header>
@@ -57,15 +69,38 @@ _TEMPLATE = """<!DOCTYPE html>
 <main>
 
 <section>
- <h2>Attack narrative &amp; lifecycle</h2>
+ <h2>Executive summary</h2>
+ {% if summary.family_hint != 'unknown' %}
+ <div class="banner">Suspected family: <b>{{ summary.family_hint }}</b>
+   (fingerprint confidence {{ '%.0f'|format(summary.family_confidence*100) }}%) —
+   <span class="muted">static fingerprint, not a confirmed family attribution</span></div>
+ {% endif %}
+ <div class="summary">
+  <div class="card"><div class="k">Analysis mode</div><div class="v">{{ summary.analysis_mode }}</div></div>
+  <div class="card"><div class="k">Runtime observed</div><div class="v">{{ 'Yes' if summary.runtime_observed else 'No' }}</div></div>
+  <div class="card"><div class="k">Primary capability</div><div class="v">{{ summary.primary_capability }}</div></div>
+  <div class="card"><div class="k">Highest observed phase</div><div class="v">{{ summary.highest_observed_phase }}</div></div>
+  <div class="card"><div class="k">Highest inferred phase</div><div class="v">{{ summary.highest_inferred_phase }} <span class="muted">(static)</span></div></div>
+  <div class="card"><div class="k">ATT&amp;CK techniques</div><div class="v">{{ summary.technique_count }}</div></div>
+  <div class="card"><div class="k">Network indicators</div><div class="v">{{ summary.network_indicator_count }}</div></div>
+ </div>
+</section>
+
+<section>
+ <h2>Execution status &amp; lifecycle</h2>
  <p>Format: <span class="pill">{{ fmt }}</span> · Isolation: <span class="pill">{{ isolation }}</span>
-    · Execution reached: <b class="reached">{{ furthest }}</b></p>
+    · Runtime observed: <b>{{ 'Yes' if summary.runtime_observed else 'No' }}</b></p>
+ <p class="muted">Highest <b>observed</b> phase (runtime/memory-confirmed):
+    <b class="reached">{{ summary.highest_observed_phase }}</b> ·
+    Highest <b>inferred</b> phase (static capability):
+    <b class="reached">{{ summary.highest_inferred_phase }}</b></p>
  <ul>{% for p in phases %}{% if p.reached %}<li>{{ p.summary }}</li>{% endif %}{% endfor %}</ul>
  <table>
-  <tr><th>Phase</th><th>Status</th><th>Techniques</th></tr>
+  <tr><th>Phase</th><th>Status</th><th>Standing</th><th>Techniques</th></tr>
   {% for p in phases %}
   <tr><td>{{ p.name }}</td>
    <td>{% if p.reached %}<span class="reached">reached</span>{% else %}<span class="notreached">—</span>{% endif %}</td>
+   <td>{% if p.reached %}{{ badge(p.status) }}{% endif %}</td>
    <td>{% for t in p.techniques %}<span class="pill">{{ t.technique_id }}</span>{% endfor %}</td></tr>
   {% endfor %}
  </table>
@@ -89,13 +124,14 @@ _TEMPLATE = """<!DOCTYPE html>
 {% endif %}
 
 <section>
- <h2>ATT&amp;CK mapping <span class="muted">(every mapping explains <i>why</i>)</h2>
+ <h2>ATT&amp;CK mapping <span class="muted">(every mapping explains <i>why</i>; standing = observed vs inferred)</h2>
  <table>
-  <tr><th>Technique</th><th>Tactic</th><th class="conf">Confidence</th><th>Why</th><th>Evidence</th></tr>
+  <tr><th>Technique</th><th>Tactic</th><th>Standing</th><th class="conf">Confidence</th><th>Why</th><th>Evidence</th></tr>
   {% for m in mappings %}
   <tr>
    <td><b>{{ m.technique_id }}</b><br>{{ m.technique_name }}</td>
    <td>{{ m.tactic }}</td>
+   <td>{{ badge(m.status) }}</td>
    <td class="conf {{ conf_class(m.confidence) }}">{{ '%.2f'|format(m.confidence) }}</td>
    <td>{{ m.why }}</td>
    <td class="muted">{% for e in m.evidence_ids[:4] %}{{ e }}<br>{% endfor %}</td>
@@ -105,10 +141,11 @@ _TEMPLATE = """<!DOCTYPE html>
 </section>
 
 <section>
- <h2>Timeline</h2>
- <table><tr><th>#</th><th>Source</th><th>Event</th><th class="conf">Conf</th></tr>
+ <h2>{{ 'Runtime timeline &amp; analysis findings' if summary.runtime_observed else 'Analysis findings' }}</h2>
+ <p class="muted">{% if summary.runtime_observed %}Observed events are runtime/memory-confirmed; inferred rows are static findings.{% else %}Static-only run: these are <b>findings about the binary's capabilities</b>, not observed runtime events.{% endif %}</p>
+ <table><tr><th>#</th><th>Source</th><th>Standing</th><th>Finding / event</th><th class="conf">Conf</th></tr>
  {% for e in timeline %}
- <tr><td>{{ e.seq }}</td><td class="muted">{{ e.source }}</td><td>{{ e.text }}</td>
+ <tr><td>{{ e.seq }}</td><td class="muted">{{ e.source }}</td><td>{{ badge(e.status) }}</td><td>{{ e.text }}</td>
      <td class="{{ conf_class(e.confidence) }}">{{ '%.2f'|format(e.confidence) }}</td></tr>
  {% endfor %}
  </table>
@@ -249,20 +286,31 @@ def _graph_svg(graph, max_nodes: int = 40) -> tuple[str, str]:
     return "".join(parts), stats
 
 
+_BADGE = {"observed": "b-obs", "inferred": "b-inf", "speculative": "b-spec"}
+
+
+def _badge(status: str) -> str:
+    cls = _BADGE.get(status, "b-spec")
+    return f'<span class="badge {cls}">{escape(str(status))}</span>'
+
+
 def render_html(inp: ReportInputs) -> str:
     env = Environment(autoescape=False)
     env.globals["conf_class"] = _conf_class
+    env.globals["badge"] = _badge
     tmpl = env.from_string(_TEMPLATE)
     layers, final_payload = _collect_layers(inp.store)
     iocs = _collect_iocs(inp.store)
     graph_svg, graph_stats = _graph_svg(inp.graph)
+    isolated = inp.isolation.startswith("verified")
+    summary = build_summary(inp.store, inp.mappings, inp.phases, isolated=isolated)
     return tmpl.render(
         run_id=inp.run_id,
         sample_name=escape(inp.sample_name),
         sha256=inp.sha256,
         fmt=inp.fmt,
         isolation=inp.isolation,
-        furthest=furthest_phase(inp.phases),
+        summary=summary,
         phases=inp.phases,
         mappings=inp.mappings,
         timeline=inp.timeline,

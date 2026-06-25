@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from ..core.provenance import OBSERVED, SPECULATIVE, strongest
 from .attack_map import AttackMapping
 
 # Lifecycle phases in canonical order, each backed by ATT&CK tactics.
@@ -32,6 +33,7 @@ class Phase:
     reached: bool
     techniques: list[AttackMapping]
     summary: str
+    status: str = "speculative"  # observed | inferred | speculative (best in phase)
 
 
 def build_narrative(mappings: list[AttackMapping]) -> list[Phase]:
@@ -52,18 +54,40 @@ def build_narrative(mappings: list[AttackMapping]) -> list[Phase]:
                 seen.add(m.technique_id)
                 uniq.append(m)
         reached = bool(uniq)
+        status = strongest([m.status for m in uniq]) if uniq else SPECULATIVE
         if reached:
             names = ", ".join(f"{m.technique_id} ({m.technique_name})" for m in uniq)
-            summary = f"Reached {name}: {names}."
+            verb = "reached" if status == OBSERVED else "indicated (static inference)"
+            summary = f"{name.capitalize()} {verb}: {names}."
         else:
             summary = f"No evidence that {name} was reached."
-        phases.append(Phase(name=name, reached=reached, techniques=uniq, summary=summary))
+        phases.append(Phase(name=name, reached=reached, techniques=uniq, summary=summary, status=status))
     return phases
 
 
+def _furthest(phases: list[Phase], predicate) -> str:
+    hits = [p.name for p in phases if p.reached and predicate(p)]
+    return hits[-1] if hits else "none"
+
+
+def highest_observed_phase(phases: list[Phase]) -> str:
+    """The furthest phase confirmed by runtime/memory evidence."""
+    return _furthest(phases, lambda p: p.status == OBSERVED)
+
+
+def highest_inferred_phase(phases: list[Phase]) -> str:
+    """The furthest phase supported by any (incl. static) evidence."""
+    return _furthest(phases, lambda p: True)
+
+
 def furthest_phase(phases: list[Phase]) -> str:
-    reached = [p.name for p in phases if p.reached]
-    return reached[-1] if reached else "no observable malicious phase"
+    # Backwards-compatible: prefer observed, fall back to inferred.
+    obs = highest_observed_phase(phases)
+    return obs if obs != "none" else highest_inferred_phase(phases)
+
+
+def runtime_observed(phases: list[Phase]) -> bool:
+    return any(p.reached and p.status == OBSERVED for p in phases)
 
 
 def narrative_text(phases: list[Phase]) -> str:
@@ -72,5 +96,6 @@ def narrative_text(phases: list[Phase]) -> str:
         marker = "✔" if p.reached else "·"
         lines.append(f"{marker} {p.summary}")
     lines.append("")
-    lines.append(f"Execution reached: **{furthest_phase(phases)}**.")
+    lines.append(f"Highest observed phase: **{highest_observed_phase(phases)}**.")
+    lines.append(f"Highest inferred phase: **{highest_inferred_phase(phases)}** (static inference).")
     return "\n".join(lines)
