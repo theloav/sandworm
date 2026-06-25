@@ -17,6 +17,37 @@ from sandworm.reconstruct.narrative import build_narrative
 from sandworm.reporting.summary import build_summary
 
 
+def test_benign_imports_do_not_trigger_high_risk():
+    # Legitimate software whose imports merely *resemble* capability (a process
+    # launch + a registry write + a debugger check + a networking call) must NOT
+    # be rated High — every backing technique is a weak, dual-use single-import
+    # inference. This is the notepad.exe false-positive.
+    store = EvidenceStore()
+    for imp, hint in [("CreateProcess", "T1059"), ("RegSetValueEx", "T1547.001"),
+                      ("RegCreateKey", "T1112"), ("IsDebuggerPresent", "T1622")]:
+        store.append(EvidenceItem(run_id="r", source="static.pe", artifact="api_call", operation="resolve",
+                     subject={"a": "x"}, object={"import": imp}, details={"attack_hint": hint, "why": imp}, confidence=0.4))
+    summary = build_summary(store, map_evidence(store), build_narrative(map_evidence(store)), isolated=False)
+    assert summary.risk in {"Low", "Medium"}        # NOT High/Critical
+    assert summary.likelihood in {"Low", "Medium"}
+
+
+def test_committed_benign_samples_are_low_risk():
+    # The real benign sample set (compiled ELF + legit PHP) must come back Low.
+    from pathlib import Path
+
+    benign = Path(__file__).resolve().parent.parent / "samples" / "benign"
+    from sandworm.core.pipeline import analyze_sample
+    for name in ("greet", "wordcount", "contact_form.php"):
+        p = benign / name
+        if not p.exists():
+            continue
+        result = analyze_sample(Sample.from_path(p), enable_dynamic=False)
+        s = build_summary(result.store, result.mappings, result.phases, isolated=False)
+        assert s.risk == "Low", f"{name} should be Low, got {s.risk}"
+        assert s.maliciousness_score < 40, f"{name} scored {s.maliciousness_score}"
+
+
 def test_go_runtime_symbols_not_iocs():
     noise = "runtime.name reflect.name pkix.Name big.Int idna.info unicode.Cc asn1.BitString.At go.itab.net"
     domains = {v for k, v, _c, _f in extract_iocs(noise) if k == "domain"}

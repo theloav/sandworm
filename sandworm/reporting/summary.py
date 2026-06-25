@@ -12,6 +12,7 @@ import math
 from dataclasses import dataclass, field
 
 from ..core.evidence import EvidenceStore
+from ..core.provenance import OBSERVED
 from ..reconstruct.attack_map import AttackMapping
 from ..reconstruct.narrative import (
     Phase,
@@ -150,22 +151,37 @@ def _risk(store: EvidenceStore, mappings: list[AttackMapping], summary_net: int,
     if family != "unknown":
         reasons.append(f"Static fingerprint match: {family}")
 
-    # Risk: severity of the worst capability.
-    if "impact" in tactics:
+    # Risk must rest on the STRENGTH of evidence, not merely the presence of a
+    # tactic — otherwise legitimate software trips it (a benign app importing
+    # CreateProcess + RegSetValueEx + a networking call nominally "has" execution,
+    # persistence and C2). High/Critical therefore require a concrete capability
+    # or corroboration; a bag of weak, dual-use single-import inferences does not.
+    credible = sum(1 for m in mappings if m.status == OBSERVED or m.confidence >= 0.6)
+    observed_malicious = any(m.status == OBSERVED for m in mappings)
+    strong_capability = (
+        _has_capability(store, "ransomware")
+        or _has_capability(store, "inhibit_recovery")
+        or _has_verdict(store, "php_webshell")
+        or "T1055" in tids
+        or n_sinks >= 2
+        or family != "unknown"
+        or observed_malicious
+    )
+
+    if "impact" in tactics:                                   # only fires from a real impact capability
         risk = "Critical"
-    elif _has_verdict(store, "php_webshell") or "credential-access" in tactics or "T1055" in tids or (
-        "execution" in tactics and {"persistence", "command-and-control"} & tactics
-    ):
+    elif strong_capability or "credential-access" in tactics or (credible >= 2 and summary_net >= 1):
         risk = "High"
-    elif tactics & {"execution", "command-and-control", "discovery"}:
+    elif credible >= 1 or summary_net >= 2 or n_sinks == 1:
         risk = "Medium"
-    else:
+    else:                                                     # only weak, dual-use single-import signals
         risk = "Low"
 
-    # Likelihood that this is genuinely malicious and would execute.
-    if family != "unknown" or _has_verdict(store, "php_webshell") or n_sinks >= 3 or _has_capability(store, "ransomware"):
+    # Likelihood that this is genuinely malicious (vs. benign software whose
+    # imports merely *resemble* malicious capability).
+    if strong_capability or n_sinks >= 3:
         likelihood = "High"
-    elif mappings:
+    elif credible >= 1 or summary_net >= 2:
         likelihood = "Medium"
     else:
         likelihood = "Low"
