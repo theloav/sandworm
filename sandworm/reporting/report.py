@@ -30,50 +30,91 @@ _TEMPLATE = """<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8">
 <title>SANDWORM report — {{ sample_name }}</title>
 <style>
- body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;margin:0;background:#0d1117;color:#c9d1d9}
- header{background:#161b22;padding:18px 28px;border-bottom:1px solid #30363d}
- h1{margin:0;font-size:20px;color:#e6edf3} h2{color:#e6edf3;border-bottom:1px solid #30363d;padding-bottom:6px}
- .sub{color:#8b949e;font-size:13px;margin-top:4px}
- main{padding:24px 28px;max-width:1100px;margin:auto}
- section{margin-bottom:34px}
- .promise{font-style:italic;color:#7ee787}
- table{border-collapse:collapse;width:100%;font-size:13px}
- th,td{border:1px solid #30363d;padding:6px 8px;text-align:left;vertical-align:top}
- th{background:#161b22}
+ :root{--bg:#0d1117;--panel:#161b22;--panel2:#1c2230;--line:#30363d;--fg:#c9d1d9;--fg2:#e6edf3;--mut:#8b949e;--acc:#1f6feb}
+ *{box-sizing:border-box}
+ body{font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;margin:0;background:var(--bg);color:var(--fg);line-height:1.5}
+ a{color:#79c0ff;text-decoration:none} a:hover{text-decoration:underline}
+ code{background:#0d1117;border:1px solid var(--line);border-radius:4px;padding:0 4px;font-size:12px}
+ /* hero */
+ .hero{background:linear-gradient(135deg,#161b22,#0d1117);border-bottom:1px solid var(--line);padding:22px 28px}
+ .hero-row{display:flex;align-items:center;gap:18px;flex-wrap:wrap;max-width:1140px;margin:auto}
+ .hero h1{margin:0;font-size:21px;color:var(--fg2);letter-spacing:.2px}
+ .hero .sub{color:var(--mut);font-size:12.5px;margin-top:5px;word-break:break-all}
+ .hero .promise{font-style:italic;color:#7ee787;font-size:12.5px;margin-top:6px}
+ .riskbox{margin-left:auto;text-align:center;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 18px;min-width:140px}
+ .riskbox .lbl{font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--mut)}
+ /* sticky nav */
+ nav{position:sticky;top:0;z-index:9;background:#0d1117e6;backdrop-filter:blur(6px);border-bottom:1px solid var(--line);padding:8px 28px;font-size:12.5px}
+ nav .inner{max-width:1140px;margin:auto;display:flex;gap:6px;flex-wrap:wrap}
+ nav a{color:var(--mut);padding:3px 9px;border-radius:6px}
+ nav a:hover{background:var(--panel2);color:var(--fg2);text-decoration:none}
+ main{padding:26px 28px;max-width:1140px;margin:auto}
+ section{margin-bottom:30px;scroll-margin-top:54px}
+ h2{color:var(--fg2);font-size:17px;border-bottom:1px solid var(--line);padding-bottom:7px;margin-bottom:12px}
+ h3{color:var(--fg2);font-size:14px;margin:14px 0 6px}
+ table{border-collapse:collapse;width:100%;font-size:13px;background:var(--panel);border-radius:8px;overflow:hidden}
+ th,td{border-bottom:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+ th{background:var(--panel2);color:var(--fg2);font-weight:600;font-size:11.5px;text-transform:uppercase;letter-spacing:.3px}
+ tbody tr:hover{background:#1c223080}
  .conf{font-weight:bold}
  .hi{color:#f85149}.med{color:#d29922}.lo{color:#8b949e}
- pre{background:#161b22;border:1px solid #30363d;padding:12px;border-radius:6px;overflow:auto;font-size:12px}
- .pill{display:inline-block;background:#1f6feb22;border:1px solid #1f6feb;color:#79c0ff;border-radius:10px;padding:1px 8px;font-size:11px;margin:1px}
+ pre{background:var(--panel);border:1px solid var(--line);padding:12px;border-radius:8px;overflow:auto;font-size:12px;line-height:1.45}
+ .pill{display:inline-block;background:#1f6feb22;border:1px solid var(--acc);color:#79c0ff;border-radius:10px;padding:1px 8px;font-size:11px;margin:1px}
  .reached{color:#7ee787}.notreached{color:#6e7681}
- .bar{background:#21262d;border-radius:4px;height:14px;overflow:hidden}
- .bar>span{display:block;height:100%;background:#238636}
- .layer{border-left:3px solid #1f6feb;padding-left:10px;margin:8px 0}
- .muted{color:#8b949e;font-size:12px}
- svg{background:#161b22;border:1px solid #30363d;border-radius:6px;width:100%;height:auto}
- .badge{display:inline-block;border-radius:4px;padding:1px 7px;font-size:11px;font-weight:bold;text-transform:uppercase;letter-spacing:.3px}
+ .bar{background:#21262d;border-radius:5px;height:13px;overflow:hidden;min-width:90px}
+ .bar>span{display:block;height:100%;background:linear-gradient(90deg,#238636,#2ea043)}
+ .layer{border-left:3px solid var(--acc);padding:4px 0 4px 12px;margin:8px 0}
+ .muted{color:var(--mut);font-size:12px}
+ svg{background:var(--panel);border:1px solid var(--line);border-radius:8px;width:100%;height:auto}
+ .badge{display:inline-block;border-radius:4px;padding:1px 7px;font-size:10.5px;font-weight:bold;text-transform:uppercase;letter-spacing:.3px}
  .b-obs{background:#23863633;border:1px solid #238636;color:#7ee787}
  .b-inf{background:#9e6a0322;border:1px solid #d29922;color:#e3b341}
  .b-spec{background:#6e768122;border:1px solid #6e7681;color:#8b949e}
- .summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin-top:8px}
- .card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:12px 14px}
- .card .k{color:#8b949e;font-size:11px;text-transform:uppercase;letter-spacing:.4px}
- .card .v{font-size:16px;color:#e6edf3;margin-top:3px}
- .banner{background:#161b22;border:1px solid #30363d;border-left:4px solid #f0883e;border-radius:6px;padding:12px 16px;margin-top:10px}
- .risk{display:inline-block;border-radius:5px;padding:2px 10px;font-weight:bold;font-size:14px}
+ .summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px;margin-top:10px}
+ .card{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:12px 14px;transition:border-color .15s}
+ .card:hover{border-color:#475067}
+ .card .k{color:var(--mut);font-size:10.5px;text-transform:uppercase;letter-spacing:.4px}
+ .card .v{font-size:16px;color:var(--fg2);margin-top:4px}
+ .banner{background:var(--panel);border:1px solid var(--line);border-left:4px solid #f0883e;border-radius:8px;padding:12px 16px;margin-top:10px}
+ .risk{display:inline-block;border-radius:6px;padding:3px 14px;font-weight:bold;font-size:15px}
  .r-Critical{background:#f8514922;border:1px solid #f85149;color:#ff7b72}
  .r-High{background:#db6d2822;border:1px solid #db6d28;color:#f0883e}
  .r-Medium{background:#9e6a0322;border:1px solid #d29922;color:#e3b341}
  .r-Low{background:#23863622;border:1px solid #238636;color:#7ee787}
+ details{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:6px 12px;margin-top:8px}
+ details>summary{cursor:pointer;color:var(--fg2);font-size:13px;padding:6px 0;user-select:none}
+ details[open]>summary{border-bottom:1px solid var(--line);margin-bottom:8px}
+ details table{border-radius:0}
+ /* interactive graph */
+ #rg .node{cursor:pointer}
+ #rg.sel .node{opacity:.22}#rg.sel .edge{opacity:.12}
+ #rg .node.on{opacity:1}#rg .edge.on{opacity:1;stroke:#79c0ff !important;stroke-width:2}
+ #rg .node.on circle{stroke:#fff;stroke-width:2}
+ .hint{color:var(--mut);font-size:11.5px;margin:6px 0}
+ footer{color:var(--mut);font-size:12px;border-top:1px solid var(--line);padding-top:14px;margin-top:10px}
 </style></head>
 <body>
-<header>
- <h1>🪱 SANDWORM — Reverse-Engineering Report</h1>
- <div class="sub">{{ sample_name }} · sha256 <code>{{ sha256 }}</code> · run <code>{{ run_id }}</code></div>
- <div class="promise">Given a sample, reconstruct what happened, explain why, and emit detections.</div>
-</header>
+<div class="hero"><div class="hero-row">
+ <div>
+  <h1>🪱 SANDWORM — Reverse-Engineering Report</h1>
+  <div class="sub">{{ sample_name }} · <code>{{ sha256 }}</code> · run <code>{{ run_id }}</code></div>
+  <div class="promise">Given a sample, reconstruct what happened, explain why, and emit detections.</div>
+ </div>
+ <div class="riskbox">
+  <div class="lbl">Risk</div>
+  <div style="margin:5px 0">{{ risk_pill(summary.risk)|safe }}</div>
+  <div class="muted">{{ summary.family_hint if summary.family_hint!='unknown' else fmt|upper }} · exec {{ 'Yes' if summary.execution_confirmed else 'No' }}</div>
+ </div>
+</div></div>
+<nav><div class="inner">
+ <a href="#summary">Summary</a><a href="#lifecycle">Lifecycle</a><a href="#graph">Reasoning graph</a>
+ {% if layers %}<a href="#deobf">Deobfuscation</a>{% endif %}<a href="#attack">ATT&amp;CK</a>
+ <a href="#findings">Findings</a><a href="#iocs">IOCs</a><a href="#coverage">Coverage</a>
+ <a href="#detections">Detections</a><a href="#assessment">Assessment</a><a href="#appendix">Evidence</a>
+</div></nav>
 <main>
 
-<section>
+<section id="summary">
  <h2>Executive summary</h2>
  {% if summary.family_hint != 'unknown' %}
  <div class="banner">Suspected family: <b>{{ summary.family_hint }}</b>
@@ -93,7 +134,7 @@ _TEMPLATE = """<!DOCTYPE html>
  </div>
 </section>
 
-<section>
+<section id="lifecycle">
  <h2>Execution status &amp; lifecycle</h2>
  <p>Format: <span class="pill">{{ fmt }}</span> · Isolation: <span class="pill">{{ isolation }}</span>
     · Runtime observed: <b>{{ 'Yes' if summary.runtime_observed else 'No' }}</b></p>
@@ -113,14 +154,35 @@ _TEMPLATE = """<!DOCTYPE html>
  </table>
 </section>
 
-<section>
- <h2>Behavioral graph</h2>
+<section id="graph">
+ <h2>Reasoning graph</h2>
  <div class="muted">{{ graph_stats }}</div>
+ <p class="hint">💡 Click any node to trace its reasoning chain (Sample → Indicator → Capability → ATT&amp;CK → Detection). Click empty space to reset.</p>
  {{ graph_svg|safe }}
+ <script>
+ (function(){
+  var svg=document.getElementById('rg'); if(!svg)return;
+  var nodes=[].slice.call(svg.querySelectorAll('.node'));
+  var edges=[].slice.call(svg.querySelectorAll('.edge'));
+  var adj={}; edges.forEach(function(e){
+    var s=e.getAttribute('data-s'),d=e.getAttribute('data-d');
+    (adj[s]=adj[s]||[]).push(d);(adj[d]=adj[d]||[]).push(s);
+  });
+  function reset(){svg.classList.remove('sel');nodes.forEach(function(n){n.classList.remove('on')});edges.forEach(function(e){e.classList.remove('on')});}
+  function pick(i){
+    reset();svg.classList.add('sel');
+    var keep={}; keep[i]=1; (adj[i]||[]).forEach(function(x){keep[x]=1});
+    nodes.forEach(function(n){if(keep[n.getAttribute('data-i')])n.classList.add('on')});
+    edges.forEach(function(e){var s=e.getAttribute('data-s'),d=e.getAttribute('data-d');if(s==i||d==i)e.classList.add('on')});
+  }
+  nodes.forEach(function(n){n.addEventListener('click',function(ev){ev.stopPropagation();pick(n.getAttribute('data-i'));});});
+  svg.addEventListener('click',reset);
+ })();
+ </script>
 </section>
 
 {% if layers %}
-<section>
+<section id="deobf">
  <h2>Deobfuscation — {{ layers|length }} layer(s) peeled</h2>
  {% for l in layers %}
  <div class="layer"><b>layer {{ l.depth }}</b> via <code>{{ l.function }}</code> ({{ l.wrapper }})
@@ -130,7 +192,7 @@ _TEMPLATE = """<!DOCTYPE html>
 </section>
 {% endif %}
 
-<section>
+<section id="attack">
  <h2>ATT&amp;CK mapping <span class="muted">(every mapping explains <i>why</i>; standing = observed vs inferred)</h2>
  <table>
   <tr><th>Technique</th><th>Tactic</th><th>Standing</th><th class="conf">Confidence</th><th>Why</th><th>Evidence</th></tr>
@@ -155,18 +217,20 @@ _TEMPLATE = """<!DOCTYPE html>
  <p class="muted">The confidence timeline shows the static value now and what the dynamic / memory lanes would still contribute (<i>pending</i> until detonation / memory analysis runs).</p>
 </section>
 
-<section>
+<section id="findings">
  <h2>{{ 'Runtime timeline &amp; analysis findings' if summary.runtime_observed else 'Analysis findings' }}</h2>
  <p class="muted">{% if summary.runtime_observed %}Observed events are runtime/memory-confirmed; inferred rows are static findings.{% else %}Static-only run: these are <b>findings about the binary's capabilities</b>, not observed runtime events.{% endif %}</p>
+ <details {{ 'open' if timeline|length <= 12 else '' }}><summary>{{ timeline|length }} finding(s)</summary>
  <table><tr><th>#</th><th>Source</th><th>Standing</th><th>Finding / event</th><th class="conf">Conf</th></tr>
  {% for e in timeline %}
  <tr><td>{{ e.seq }}</td><td class="muted">{{ e.source }}</td><td>{{ badge(e.status) }}</td><td>{{ e.text }}</td>
      <td class="{{ conf_class(e.confidence) }}">{{ '%.2f'|format(e.confidence) }}</td></tr>
  {% endfor %}
  </table>
+ </details>
 </section>
 
-<section>
+<section id="iocs">
  <h2>Indicators of Compromise</h2>
  {% if iocs %}
  <table><tr><th>Type</th><th>Value</th><th class="conf">Conf</th><th>FP risk</th></tr>
@@ -178,7 +242,7 @@ _TEMPLATE = """<!DOCTYPE html>
  {% else %}<p class="muted">No IOCs extracted.</p>{% endif %}
 </section>
 
-<section>
+<section id="coverage">
  <h2>Detection coverage</h2>
  <p><b>{{ '%.0f'|format(coverage.overall*100) }}%</b> of <b>inferred</b> ATT&amp;CK techniques are covered by generated rules.
     Runtime coverage of <b>observed</b> techniques: <b>{{ '%.0f%%'|format(coverage.runtime_coverage*100) if coverage.runtime_coverage is not none else 'N/A (nothing executed)' }}</b>.</p>
@@ -199,7 +263,7 @@ _TEMPLATE = """<!DOCTYPE html>
  {% endfor %}</table>
 </section>
 
-<section>
+<section id="detections">
  <h2>Generated detections</h2>
  <h3>YARA</h3>
  {% if yara %}{% for r in yara %}<pre>{{ r.to_yara() }}</pre>{% endfor %}
@@ -210,7 +274,7 @@ _TEMPLATE = """<!DOCTYPE html>
  {% else %}<p class="muted">No behavioral Sigma rule generated.</p>{% endif %}
 </section>
 
-<section>
+<section id="assessment">
  <h2>Analyst assessment</h2>
  <div class="summary">
   <div class="card"><div class="k">Risk</div><div class="v">{{ risk_pill(summary.risk)|safe }}</div></div>
@@ -223,8 +287,9 @@ _TEMPLATE = """<!DOCTYPE html>
  <p><b>Recommended next step:</b> {{ next_step }}</p>
 </section>
 
-<section>
+<section id="appendix">
  <h2>Evidence appendix <span class="muted">(every claim above is auditable here)</span></h2>
+ <details {{ 'open' if appendix|length <= 10 else '' }}><summary>{{ appendix|length }} evidence item(s) — click an evidence id above to jump here</summary>
  <table><tr><th>ID</th><th>Source</th><th>Standing</th><th class="conf">Conf</th><th>Observation</th><th>Raw refs</th></tr>
  {% for e in appendix %}
  <tr id="{{ e.id }}"><td class="muted">{{ e.id }}</td><td class="muted">{{ e.source }}</td>
@@ -234,6 +299,7 @@ _TEMPLATE = """<!DOCTYPE html>
      <td class="muted">{{ e.refs }}<br><span class="muted">{{ e.ts }}</span></td></tr>
  {% endfor %}
  </table>
+ </details>
 </section>
 
 <footer class="muted">Generated by SANDWORM · all analysis performed offline · no sample bytes executed without verified isolation.</footer>
@@ -337,30 +403,40 @@ def _graph_svg(graph, max_per_tier: int = 12) -> tuple[str, str]:
             y = (h - 40) * (i + 1) / (k + 1) + 20
             pos[node.id] = (col_x[tier], y)
 
-    parts = [f"<svg viewBox='0 0 {w} {h}' xmlns='http://www.w3.org/2000/svg'>"]
-    # column headers
+    # Stable integer index per kept node (safe to embed in data-attributes,
+    # unlike raw node ids which can contain sample-controlled characters).
+    idx = {nid: i for i, nid in enumerate(kept)}
+
+    parts = [f"<svg id='rg' viewBox='0 0 {w} {h}' xmlns='http://www.w3.org/2000/svg'>"]
     for tier, label in enumerate(_TIER_LABELS):
         parts.append(f"<text x='{col_x[tier]:.0f}' y='14' fill='#6e7681' font-size='11' text-anchor='middle'>{escape(label)}</text>")
-    # edges with rel labels
+    # edges (classed + index refs so JS can highlight a node's chain)
     for e in edges:
         if e.src in pos and e.dst in pos and e.src in kept and e.dst in kept:
             x1, y1 = pos[e.src]
             x2, y2 = pos[e.dst]
-            parts.append(f"<line x1='{x1:.0f}' y1='{y1:.0f}' x2='{x2:.0f}' y2='{y2:.0f}' stroke='#30363d' stroke-width='1'/>")
+            parts.append(
+                f"<line class='edge' data-s='{idx[e.src]}' data-d='{idx[e.dst]}' "
+                f"x1='{x1:.0f}' y1='{y1:.0f}' x2='{x2:.0f}' y2='{y2:.0f}' stroke='#30363d' stroke-width='1'/>"
+            )
             if e.rel in {"INDICATES", "DETECTED_BY", "CONTAINS"} and abs(x2 - x1) > 60:
                 mx, my = (x1 + x2) / 2, (y1 + y2) / 2 - 2
                 parts.append(f"<text x='{mx:.0f}' y='{my:.0f}' fill='#484f58' font-size='8' text-anchor='middle'>{e.rel.lower()}</text>")
-    # nodes
+    # nodes (clickable groups)
     for node in nodes:
         if node.id not in pos:
             continue
         x, y = pos[node.id]
         color = _COLORS.get(node.label, "#8b949e")
         label = escape(str(node.props.get("display", node.id))[:24])
-        parts.append(f"<circle cx='{x:.0f}' cy='{y:.0f}' r='7' fill='{color}'/>")
         anchor = "end" if _TIER.get(node.label, 1) == 4 else "start"
         dx = -11 if anchor == "end" else 11
-        parts.append(f"<text x='{x+dx:.0f}' y='{y+4:.0f}' fill='#c9d1d9' font-size='10' text-anchor='{anchor}'>{label}</text>")
+        title = escape(f"{node.label}: {node.props.get('display', node.id)}")
+        parts.append(
+            f"<g class='node' data-i='{idx[node.id]}'><title>{title}</title>"
+            f"<circle cx='{x:.0f}' cy='{y:.0f}' r='7' fill='{color}'/>"
+            f"<text x='{x+dx:.0f}' y='{y+4:.0f}' fill='#c9d1d9' font-size='10' text-anchor='{anchor}'>{label}</text></g>"
+        )
     parts.append("</svg>")
     stats = f"{len(kept)} nodes across {sum(1 for c in tiers.values() if c)} reasoning tiers, {len(edges)} typed edges (Evidence hidden)"
     return "".join(parts), stats
