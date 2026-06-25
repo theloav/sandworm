@@ -115,6 +115,42 @@ def test_memory_malfind_attributes_injection():
     assert m and m[0].status == "observed"
 
 
+def test_observed_evidence_scores_higher_than_inferred():
+    # Same injection capability: confidence-weighted scoring must rank the
+    # runtime-observed version above the static-only inference.
+    def store_with(source: str, conf: float) -> EvidenceStore:
+        s = EvidenceStore()
+        for api in ("WriteProcessMemory", "CreateRemoteThread", "VirtualAllocEx"):
+            s.append(EvidenceItem(run_id="r", source=source, artifact="api_call", operation="exec",
+                     subject={"a": "x"}, object={"api": api}, confidence=conf))
+        return s
+
+    static = store_with("static.pe", 0.7)
+    observed = store_with("dynamic.windows.cape", 0.9)
+    s_static = build_summary(static, map_evidence(static), build_narrative(map_evidence(static)), isolated=False)
+    s_obs = build_summary(observed, map_evidence(observed), build_narrative(map_evidence(observed)), isolated=True)
+    assert s_obs.maliciousness_score > s_static.maliciousness_score
+    # the injection factor names its standing in both cases
+    assert any("observed" in label for label, _ in s_obs.score_factors)
+    assert any("inferred" in label for label, _ in s_static.score_factors)
+
+
+def test_score_factors_credit_distinct_capability_axes():
+    # A backdoor with persistence + discovery + C2 (no injection/ransomware) must
+    # now credit each axis, not sit at a floor — the old model ignored these.
+    store = EvidenceStore()
+    store.append(EvidenceItem(run_id="r", source="static.common", artifact="network", operation="resolve",
+                 subject={"a": "x"}, object={"kind": "domain", "value": "c2.evil.ru"}, details={"ioc": True}, confidence=0.6))
+    store.append(EvidenceItem(run_id="r", source="static.pe", artifact="api_call", operation="resolve",
+                 subject={"a": "x"}, object={"import": "CreateService"}, details={"attack_hint": "T1543.003", "why": "svc"}, confidence=0.55))
+    store.append(EvidenceItem(run_id="r", source="static.pe", artifact="api_call", operation="resolve",
+                 subject={"a": "x"}, object={"import": "GetAdaptersInfo"}, details={"attack_hint": "T1016", "why": "disc"}, confidence=0.4))
+    summary = build_summary(store, map_evidence(store), build_narrative(map_evidence(store)), isolated=False)
+    labels = " ".join(label for label, _ in summary.score_factors)
+    assert "Persistence" in labels and "Network / C2" in labels and "discovery" in labels.lower()
+    assert summary.maliciousness_score >= 35  # credited for real capability, not stuck at a floor
+
+
 def test_family_attribution_is_medium_when_static_only():
     store = EvidenceStore()
     store.append(EvidenceItem(run_id="r", source="static.pe", artifact="string", operation="read",

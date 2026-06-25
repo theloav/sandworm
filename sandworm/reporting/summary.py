@@ -174,58 +174,86 @@ def _risk(store: EvidenceStore, mappings: list[AttackMapping], summary_net: int,
     return risk, likelihood, reasons
 
 
-# Points each signal contributes to the 0-100 maliciousness score. Calibrated so
-# that a single serious capability (injection / web shell / ransomware) lands a
-# sample firmly in the High band, and ransomware reaches Critical.
-_SCORE_WEIGHTS = {
-    "malicious_technique": 12,  # base: at least one real ATT&CK technique mapped
-    "ransomware": 45,
-    "inhibit_recovery": 20,
+# Maliciousness is a confidence-weighted sum over *capability axes*, not a flat
+# bag of fixed points. Each axis contributes its severity weight scaled by the
+# STANDING of the evidence behind it — so runtime-observed behaviour counts for
+# more than a static inference, and a weak speculative signal counts for less.
+# This ties the score directly to the observed/inferred/speculative taxonomy and
+# credits whole behaviour dimensions (persistence, discovery, anti-analysis,
+# packing, collection) the old fixed model ignored. Raw evidence COUNT no longer
+# moves the score — capability does.
+_STANDING_FACTOR = {"observed": 1.15, "inferred": 1.0, "speculative": 0.6}
+
+# axis severity weights (inferred baseline; observed gets +15%, speculative −40%).
+_AXIS_WEIGHTS = {
+    "technique": 10,        # flat: at least one real ATT&CK technique mapped
+    "ransomware": 40,
+    "inhibit_recovery": 16,
     "webshell": 40,
-    "injection": 35,
-    "exec_sinks": 18,
-    "family": 18,
-    "c2": 15,                   # network egress / C2 capability
-    "upload": 10,
+    "injection": 40,
+    "credential_access": 24,
+    "persistence": 16,
+    "c2": 14,
+    "exec_sinks": 14,
+    "discovery": 9,
+    "evasion": 9,           # anti-analysis: sandbox/debugger evasion
+    "obfuscation": 11,      # packing / obfuscation / runtime unpacking
+    "collection": 11,
+    "family": 16,
 }
+
+
+def _axis_standing(mappings: list[AttackMapping], tids: tuple[str, ...] = (), tactics: tuple[str, ...] = ()) -> str | None:
+    """Best epistemic standing among the mappings anchoring an axis (so the axis
+    is weighted by how well-supported it is)."""
+    order = {"observed": 3, "inferred": 2, "speculative": 1}
+    cand = [m for m in mappings if m.technique_id in tids or m.tactic in tactics]
+    if not cand:
+        return None
+    return max(cand, key=lambda m: order.get(m.status, 0)).status
 
 
 def _maliciousness(store: EvidenceStore, mappings: list[AttackMapping], net: int, family: str) -> tuple[int, list[tuple[str, int]]]:
     factors: list[tuple[str, int]] = []
     tids = {m.technique_id for m in mappings}
-    if mappings:
-        factors.append(("Malicious ATT&CK technique(s) present", _SCORE_WEIGHTS["malicious_technique"]))
-    if _has_capability(store, "ransomware"):
-        factors.append(("Ransomware / encryption indicators", _SCORE_WEIGHTS["ransomware"]))
-    if _has_capability(store, "inhibit_recovery"):
-        factors.append(("Shadow-copy / backup deletion", _SCORE_WEIGHTS["inhibit_recovery"]))
-    if _has_verdict(store, "php_webshell"):
-        factors.append(("Web-shell heuristic matched", _SCORE_WEIGHTS["webshell"]))
-    if "T1055" in tids:
-        factors.append(("Process-injection primitives", _SCORE_WEIGHTS["injection"]))
+    tactics = {m.tactic for m in mappings}
     n_sinks = _exec_sink_count(store)
-    if n_sinks >= 2:
-        factors.append((f"Multiple execution sinks ({n_sinks})", _SCORE_WEIGHTS["exec_sinks"]))
-    if family != "unknown":
-        factors.append((f"Static fingerprint match ({family})", _SCORE_WEIGHTS["family"]))
-    if net:
-        factors.append((f"Network egress / C2 indicators ({net})", _SCORE_WEIGHTS["c2"]))
-    if any(it.object.get("sink") in {"move_uploaded_file", "file_put_contents"} for it in store):
-        factors.append(("File upload / write capability", _SCORE_WEIGHTS["upload"]))
-    # Breadth of corroborating evidence (capped) — more independent signals raise
-    # confidence in the verdict.
-    breadth = min(8, len(store) // 4)
-    if breadth:
-        factors.append((f"Breadth of corroborating evidence ({len(store)} items)", breadth))
+
+    def axis(present: bool, key: str, label: str, *, tids_: tuple[str, ...] = (),
+             tactics_: tuple[str, ...] = (), standing: str | None = None, scale: bool = True) -> None:
+        if not present:
+            return
+        st = standing or _axis_standing(mappings, tids_, tactics_) or "speculative"
+        base = _AXIS_WEIGHTS[key]
+        pts = round(base * _STANDING_FACTOR[st]) if scale else base
+        if pts:
+            factors.append((f"{label} ({st})" if scale else label, pts))
+
+    axis(bool(mappings), "technique", "Malicious ATT&CK technique mapped", tids_=tuple(tids), scale=False)
+    axis(_has_capability(store, "ransomware"), "ransomware", "Ransomware / encryption for impact", tids_=("T1486",))
+    axis(_has_capability(store, "inhibit_recovery"), "inhibit_recovery", "Inhibit system recovery", tids_=("T1490",))
+    axis(_has_verdict(store, "php_webshell"), "webshell", "Interactive web shell", tids_=("T1505.003",))
+    axis("T1055" in tids, "injection", "Process injection / loader", tids_=("T1055",))
+    axis("credential-access" in tactics, "credential_access", "Credential access", tactics_=("credential-access",))
+    axis("persistence" in tactics, "persistence", "Persistence mechanism", tactics_=("persistence",))
+    axis(bool(net) or "command-and-control" in tactics, "c2", "Network / C2 capability", tactics_=("command-and-control",))
+    axis(n_sinks >= 2, "exec_sinks", f"Multiple execution sinks ({n_sinks})", tids_=("T1059",))
+    axis("discovery" in tactics, "discovery", "Host / network discovery", tactics_=("discovery",))
+    axis(bool({"T1497", "T1622"} & tids), "evasion", "Anti-analysis / evasion", tids_=("T1497", "T1622"))
+    axis(bool({"T1027", "T1140"} & tids) or any(it.operation == "decode" for it in store),
+         "obfuscation", "Obfuscation / packing", tids_=("T1027", "T1140"))
+    axis("collection" in tactics, "collection", "Collection / capture", tactics_=("collection",))
+    axis(family != "unknown", "family", f"Family fingerprint ({family})", standing="inferred")
 
     raw = sum(p for _, p in factors)
     # Static analysis alone can never fully confirm malice -> cap below 100 and
     # show the caveat as an explicit negative factor.
     observed = any(provenance_observed(it) for it in store)
-    score = min(100 if observed else 96, raw)
     if not observed and factors:
         factors.append(("No runtime confirmation (static only)", -4))
         score = max(0, min(96, raw - 4))
+    else:
+        score = min(100, raw)
     return score, factors
 
 
