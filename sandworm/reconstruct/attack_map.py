@@ -10,10 +10,11 @@ Interpreter execution).
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 
 from ..core.evidence import EvidenceItem, EvidenceStore
 from ..core.provenance import INFERRED, provenance_of, strongest
+from .bayes import PRIOR, fuse
 
 # Cap how many distinct observations are spelled out in a mapping's "why".
 _WHY_MAX_CLAUSES = 6
@@ -66,6 +67,8 @@ class AttackMapping:
     why: str
     evidence_ids: list[str]
     status: str = INFERRED  # observed | inferred | speculative
+    prior: float = 0.0                       # Bayesian base rate the posterior updated from
+    lane_posterior: dict[str, float] = field(default_factory=dict)  # static/dynamic/memory posteriors
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -79,6 +82,14 @@ class _Rule:
     base_conf: float
     match: Callable[[EvidenceItem], bool]
     why_tmpl: str
+
+
+def _lane_of(source: str) -> str:
+    if source.startswith("dynamic."):
+        return "dynamic"
+    if source.startswith("memory."):
+        return "memory"
+    return "static"
 
 
 def _obj_str(it: EvidenceItem) -> str:
@@ -211,14 +222,20 @@ def map_evidence(store: EvidenceStore) -> list[AttackMapping]:
     rules = _rules()
     agg: dict[str, AttackMapping] = {}
     prov: dict[str, list[str]] = {}  # technique_id -> contributing provenances
+    supports: dict[str, dict[str, list[float]]] = {}  # tid -> lane -> per-item supports
+
+    def _support(tid: str, conf: float, it: EvidenceItem) -> None:
+        lane = _lane_of(it.source)
+        supports.setdefault(tid, {}).setdefault(lane, []).append(conf)
+
     def _emit(tid: str, name: str, tactic: str, conf: float, why: str, it: EvidenceItem) -> None:
         prov.setdefault(tid, []).append(provenance_of(it.source, it.confidence))
+        _support(tid, conf, it)
         existing = agg.get(tid)
         if existing is None:
             agg[tid] = AttackMapping(tid, name, tactic, conf, why, [it.id])
         else:
             existing.evidence_ids.append(it.id)
-            existing.confidence = round(min(0.99, max(existing.confidence, conf) + 0.03), 3)
             detail_key = why.split(":", 1)[-1].strip()
             if detail_key not in existing.why and existing.why.count("; ") < _WHY_MAX_CLAUSES:
                 existing.why += f"; {why}"
@@ -245,9 +262,11 @@ def map_evidence(store: EvidenceStore) -> list[AttackMapping]:
                 continue
             detail = _detail_for(it)
             why = rule.why_tmpl.format(detail=detail)
-            # Combine confidence: take max of evidence confidence * rule base.
+            # Per-item support strength (rule base scaled by the item's confidence);
+            # the technique's confidence is the Bayesian fusion of all such supports.
             conf = round(min(0.99, rule.base_conf * (0.5 + 0.5 * it.confidence) + 0.0), 3)
             prov.setdefault(rule.technique_id, []).append(item_prov)
+            _support(rule.technique_id, conf, it)
             existing = agg.get(rule.technique_id)
             if existing is None:
                 agg[rule.technique_id] = AttackMapping(
@@ -260,15 +279,19 @@ def map_evidence(store: EvidenceStore) -> list[AttackMapping]:
                 )
             else:
                 existing.evidence_ids.append(it.id)
-                # More corroborating evidence raises confidence (capped).
-                existing.confidence = round(min(0.99, max(existing.confidence, conf) + 0.03), 3)
                 # Keep the explanation readable: list the first few distinct
                 # observations, then summarize the rest rather than emitting a
                 # wall of text. (evidence_ids still record every backing item.)
                 if detail not in existing.why and existing.why.count("; ") < _WHY_MAX_CLAUSES:
                     existing.why += f"; {why}"
+    # Bayesian posterior per technique: fuse the per-lane supports into one
+    # auditable confidence + per-lane posteriors (prior is reported too).
     for tid, mapping in agg.items():
         mapping.status = strongest(prov.get(tid, []))
+        posterior, lanes = fuse(supports.get(tid, {}))
+        mapping.confidence = posterior
+        mapping.lane_posterior = lanes
+        mapping.prior = PRIOR
     # Stable order: by tactic order then technique id.
     order = {t: i for i, t in enumerate(TACTICS)}
     out = sorted(agg.values(), key=lambda m: (order.get(m.tactic, 99), m.technique_id))

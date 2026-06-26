@@ -58,6 +58,18 @@ class ConfidenceBreakdown:
     lane_confidence: dict[str, float | None]  # static/dynamic/memory -> best conf or None (pending)
     signals: list[str] = field(default_factory=list)   # the concrete atoms that fired
     contributions: list[tuple[str, float]] = field(default_factory=list)
+    prior: float = 0.0                        # Bayesian base rate the posterior updated from
+    lane_posterior: dict[str, float] = field(default_factory=dict)  # per-lane fused posteriors
+
+    def bayes_chain(self) -> list[tuple[str, str]]:
+        """(label, value) steps of the Bayesian update, for display:
+        prior → each lane's fused posterior → aggregate."""
+        out: list[tuple[str, str]] = [("prior", f"{self.prior:.2f}")] if self.prior else []
+        for lane in _LANES:
+            if lane in self.lane_posterior:
+                out.append((lane, f"{self.lane_posterior[lane]:.2f}"))
+        out.append(("aggregate", f"{self.final_confidence:.2f}"))
+        return out
 
     def lane_timeline(self) -> list[tuple[str, str]]:
         """(lane, "0.68" | "pending") in static->dynamic->memory order."""
@@ -123,4 +135,6 @@ def confidence_breakdown(store: EvidenceStore, mapping: AttackMapping) -> Confid
         lane_confidence=lane_best,
         signals=signals[:8],
         contributions=contributions,
+        prior=mapping.prior,
+        lane_posterior=mapping.lane_posterior,
     )

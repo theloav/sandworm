@@ -281,10 +281,11 @@ _TEMPLATE = """<!DOCTYPE html>
      <br>by method: {% for meth, p in bd.by_method.items() %}<span class="pill">{{ meth }} {{ p }}%</span>{% endfor %}
      &nbsp;·&nbsp; by lane: {% for s, p in bd.by_source.items() %}<span class="pill">{{ s }} {{ p }}%</span>{% endfor %}
      &nbsp;·&nbsp; <b>timeline</b>: {% for lane, val in bd.lane_timeline() %}{{ lane }} <b>{{ val }}</b>{% if not loop.last %} → {% endif %}{% endfor %}
+     <br><b>Bayesian update</b>: {% for label, val in bd.bayes_chain() %}{{ label }} <b>{{ val }}</b>{% if not loop.last %} → {% endif %}{% endfor %} <span class="muted">(prior updated by each lane's pooled evidence; runtime lanes weighted higher)</span>
   </td></tr>
   {% endfor %}
  </table>
- <p class="muted">The confidence timeline shows the static value now and what the dynamic / memory lanes would still contribute (<i>pending</i> until detonation / memory analysis runs).</p>
+ <p class="muted">Confidence is a Bayesian posterior: each technique's prior (base rate {{ '%.2f'|format(mappings[0].prior if mappings else 0.12) }}) is updated in log-odds by the pooled evidence in each lane, so independent static + dynamic + memory corroboration compounds while a lone weak signal stays near the prior.</p>
 </section>
 
 <section id="findings">
