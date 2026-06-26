@@ -22,5 +22,31 @@
     "rows": [
       {"PID": 1840, "Proto": "TCPv4", "ForeignAddr": "185.234.218.42", "ForeignPort": 443, "State": "ESTABLISHED"}
     ]
+  },
+  {
+    "_comment": "psscan (pool-tag scan) sees PID 666 that pslist does not → unlinked EPROCESS = hidden process (DKOM rootkit), surfaced as observed T1014.",
+    "plugin": "windows.psscan.PsScan",
+    "rows": [
+      {"PID": 1200, "PPID": 900, "ImageFileName": "explorer.exe"},
+      {"PID": 1840, "PPID": 1200, "ImageFileName": "loader.exe"},
+      {"PID": 2604, "PPID": 1840, "ImageFileName": "notepad.exe"},
+      {"PID": 666, "PPID": 1840, "ImageFileName": "svc_hidden.exe"}
+    ]
+  },
+  {
+    "plugin": "windows.apihooks.ApiHooks",
+    "rows": [
+      {"Process": "lsass.exe", "HookFunction": "CryptDecrypt", "HookType": "Inline", "HookModule": "<unknown>"},
+      {"Process": "explorer.exe", "HookFunction": "NtCreateFile", "HookType": "IAT", "HookModule": "<unknown>"}
+    ]
+  },
+  {
+    "_comment": "Config carved from heap: the actual C2, the recovered RSA key, and the encrypted-file tally — static says 'can encrypt', memory says 'did encrypt 417 files'.",
+    "plugin": "config_extract",
+    "rows": [
+      {"kind": "c2", "value": "https://5.252.178.99/gate.php", "PID": 1840},
+      {"kind": "rsa_key", "value": "BgIAAACkAABSU0Ex...recovered-from-heap", "PID": 2604},
+      {"kind": "encrypted_files", "count": 417, "extension": ".wnry", "PID": 2604}
+    ]
   }
 ]

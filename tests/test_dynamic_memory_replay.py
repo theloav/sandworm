@@ -110,6 +110,39 @@ def test_lifecycle_assigns_each_technique_to_one_phase():
     assert placement.get("injection", []) == ["T1055"]
 
 
+def test_memory_lane_detects_hidden_process(samples_dir):
+    # psscan sees PID 666 (svc_hidden.exe) that pslist does not → unlinked EPROCESS,
+    # surfaced as an observed hidden process driving T1014 (Rootkit).
+    result = _run(samples_dir)
+    rv = build_runtime_view(result.store)
+    assert any("svc_hidden.exe" in h for h in rv.hidden)
+    # the hidden proc is NOT folded into the visible spawn tree
+    assert "svc_hidden.exe" not in {n.name for n in rv.flatten()}
+    t1014 = [m for m in result.mappings if m.technique_id == "T1014"]
+    assert t1014 and t1014[0].status == "observed"
+
+
+def test_memory_lane_recovers_api_hooks(samples_dir):
+    # A hook on a credential API (CryptDecrypt in lsass) → T1056.004; an inline
+    # hook elsewhere corroborates injection (T1055).
+    result = _run(samples_dir)
+    rv = build_runtime_view(result.store)
+    assert any("CryptDecrypt" in h for h in rv.hooks)
+    tids = {m.technique_id for m in result.mappings}
+    assert "T1056.004" in tids
+
+
+def test_memory_lane_carves_config_confirming_encryption(samples_dir):
+    # The heap-carved encrypted-file tally turns the ransomware capability into an
+    # observed event, and the recovered C2 is a memory-confirmed network IOC.
+    result = _run(samples_dir)
+    rv = build_runtime_view(result.store)
+    assert any("417 files" in c for c in rv.config)
+    assert any("5.252.178.99" in c or "C2 (heap)" in c for c in rv.config)
+    t1486 = [m for m in result.mappings if m.technique_id == "T1486"]
+    assert t1486 and t1486[0].status == "observed"  # "did encrypt", not just "can"
+
+
 def test_memory_malfind_attributes_injection():
     # A recorded memory report's malfind row alone attributes T1055 (observed).
     from sandworm.analyzers.base import Context

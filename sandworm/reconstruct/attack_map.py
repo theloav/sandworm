@@ -30,9 +30,11 @@ TACTICS = [
 # emitting ``details.attack_hint = "Txxxx"`` — no bespoke mapping rule required.
 TECHNIQUE_INFO: dict[str, tuple[str, str]] = {
     "T1003": ("OS Credential Dumping", "credential-access"),
+    "T1014": ("Rootkit", "defense-evasion"),
     "T1016": ("System Network Configuration Discovery", "discovery"),
     "T1027": ("Obfuscated Files or Information", "defense-evasion"),
     "T1055": ("Process Injection", "defense-evasion"),
+    "T1056.004": ("Input Capture: Credential API Hooking", "collection"),
     "T1055.004": ("Process Injection: APC Injection", "defense-evasion"),
     "T1055.012": ("Process Injection: Process Hollowing", "defense-evasion"),
     "T1056.001": ("Input Capture: Keylogging", "collection"),

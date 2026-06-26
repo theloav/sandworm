@@ -37,6 +37,9 @@ class RuntimeView:
     files: list[str]
     registry: list[str]
     injected: list[str]                   # injected/suspicious memory regions (malfind)
+    hidden: list[str] = field(default_factory=list)   # unlinked EPROCESS (psscan∖pslist)
+    hooks: list[str] = field(default_factory=list)    # in-memory API hooks
+    config: list[str] = field(default_factory=list)   # config carved from the heap
 
     def flatten(self) -> list[ProcNode]:
         out: list[ProcNode] = []
@@ -58,6 +61,9 @@ def build_runtime_view(store: EvidenceStore) -> RuntimeView:
     files: list[str] = []
     registry: list[str] = []
     injected: list[str] = []
+    hidden: list[str] = []
+    hooks: list[str] = []
+    config: list[str] = []
     observed = False
 
     for it in store:
@@ -67,6 +73,19 @@ def build_runtime_view(store: EvidenceStore) -> RuntimeView:
             continue
         observed = True
         o = it.object
+        if it.object.get("hidden") or it.details.get("hidden"):
+            hidden.append(f"{o.get('name', '?')} (pid {o.get('pid', '?')})")
+            continue  # a hidden proc is not part of the visible spawn tree
+        if it.details.get("hook"):
+            hooks.append(f"{o.get('hooked', '?')} in {o.get('process', '?')}")
+            continue
+        if it.details.get("memory_extracted"):
+            if o.get("encrypted_count") is not None:
+                config.append(f"{o['encrypted_count']} files encrypted → {o.get('extension', '')}")
+            elif o.get("key_material"):
+                config.append(f"key material: {o['key_material']}")
+            elif o.get("value"):
+                config.append(f"C2 (heap): {o['value']}")
         if it.artifact == "process" and it.operation == "spawn":
             spawns.append(it)
         elif it.artifact == "process" and it.operation == "inject":
@@ -90,6 +109,9 @@ def build_runtime_view(store: EvidenceStore) -> RuntimeView:
         files=_dedupe(files),
         registry=_dedupe(registry),
         injected=_dedupe(injected),
+        hidden=_dedupe(hidden),
+        hooks=_dedupe(hooks),
+        config=_dedupe(config),
     )
 
 

@@ -192,6 +192,15 @@ _TEMPLATE = """<!DOCTYPE html>
   <div class="card"><div class="k">Registry writes</div><div class="v">{% if runtime.registry %}{% for r in runtime.registry %}<span class="pill">{{ r }}</span>{% endfor %}{% else %}<span class="muted">none</span>{% endif %}</div></div>
   <div class="card"><div class="k">Injected regions (memory)</div><div class="v">{% if runtime.injected %}{% for i in runtime.injected %}<span class="pill">{{ i }}</span>{% endfor %}{% else %}<span class="muted">none</span>{% endif %}</div></div>
  </div>
+ {% if runtime.hidden or runtime.hooks or runtime.config %}
+ <h3>Memory forensics</h3>
+ <div class="summary">
+  <div class="card"><div class="k">Hidden processes (unlinked EPROCESS)</div><div class="v">{% if runtime.hidden %}{% for h in runtime.hidden %}<span class="pill" style="border-color:#f85149;color:#ff7b72">{{ h }}</span>{% endfor %}{% else %}<span class="muted">none</span>{% endif %}</div></div>
+  <div class="card"><div class="k">In-memory API hooks</div><div class="v">{% if runtime.hooks %}{% for h in runtime.hooks %}<span class="pill">{{ h }}</span>{% endfor %}{% else %}<span class="muted">none</span>{% endif %}</div></div>
+  <div class="card"><div class="k">Config carved from heap</div><div class="v">{% if runtime.config %}{% for c in runtime.config %}<span class="pill" style="border-color:#bc8cff;color:#d2a8ff">{{ c }}</span>{% endfor %}{% else %}<span class="muted">none</span>{% endif %}</div></div>
+ </div>
+ <p class="muted">These are recovered from the memory image — they confirm <b>events</b> (a process that hid itself, an API patched in place, the actual C2/keys/encrypted-file tally), not just capability.</p>
+ {% endif %}
  {% else %}
  <p class="muted">No runtime evidence for this run. The sample was not detonated (isolation not verified) and no recorded report was ingested, so these views are <b>pending</b>. They populate automatically once a dynamic/memory report is available — the section layout does not change, the cards simply fill in.</p>
  <div class="summary">
