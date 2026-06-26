@@ -87,9 +87,9 @@ def register_builtins() -> AnalyzerRegistry:
     Done lazily (called by triage/cli) to avoid import cycles and to let optional
     heavy backends fail gracefully without breaking registry import.
     """
-    from .static import common, elf, office, pe, php, script  # noqa: F401
+    from .static import common, elf, office, pe, php, script, unpack  # noqa: F401
 
-    for mod in (common, php, script, pe, elf, office):
+    for mod in (common, php, script, pe, elf, office, unpack):
         reg = getattr(mod, "register", None)
         if reg is not None:
             reg(REGISTRY)
