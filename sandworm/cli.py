@@ -154,6 +154,60 @@ def plugins(plugin_dir: str = typer.Option("", "--dir", help="Extra plugin direc
 
 
 @app.command()
+def lineage(
+    run_id: str = typer.Argument("", help="Run to compare; defaults to the latest persisted run."),
+    threshold: float = typer.Option(0.5, "--threshold", help="Minimum behavioural similarity to report."),
+):
+    """Cross-sample lineage: build a behavioural-signature corpus from persisted
+    runs and show the target run's nearest neighbours + their behavioural diff."""
+    from .reconstruct.lineage import LineageIndex, diff, signature_of
+
+    cfg = get_config()
+    runs = sorted((cfg.work_dir / "runs").glob("*/evidence.jsonl")) if (cfg.work_dir / "runs").exists() else []
+    if not runs:
+        typer.secho("no persisted runs found (run `analyze` first)", fg=typer.colors.YELLOW)
+        raise typer.Exit(0)
+    index = LineageIndex(cfg.work_dir / "lineage.json")
+    sigs: dict[str, object] = {}
+    for jsonl in runs:
+        rid = jsonl.parent.name
+        store = EvidenceStore.load(str(jsonl))
+        meta = _read_meta(jsonl.parent / "meta.txt")
+        sig = signature_of(meta.get("sha256", rid), meta.get("sample", rid), store,
+                           created=meta.get("created", ""))
+        index.add(sig)
+        sigs[rid] = sig
+    index.save()
+
+    rid = run_id or _latest_run(cfg)
+    target = sigs.get(rid)
+    if target is None:
+        typer.secho(f"run '{rid}' not found among persisted runs", fg=typer.colors.RED)
+        raise typer.Exit(1)
+    typer.secho(f"lineage for {target.name} ({rid}) — corpus of {len(index.sigs)} sample(s)\n",  # type: ignore[attr-defined]
+                fg=typer.colors.GREEN)
+    neighbours = index.neighbours(target, threshold=threshold)  # type: ignore[arg-type]
+    if not neighbours:
+        typer.echo("no behavioural neighbours above the threshold (sample looks novel).")
+        return
+    for n in neighbours:
+        d = diff(target, n.signature)  # type: ignore[arg-type]
+        typer.secho(f"  {n.similarity*100:.0f}% · {n.signature.name} ({n.signature.sha256[:12]})", fg=typer.colors.CYAN)
+        typer.echo(f"      shared:    {', '.join(d.shared) or '—'}")
+        typer.echo(f"      evolution: {d.evolution_note(target, n.signature)}")  # type: ignore[arg-type]
+
+
+def _read_meta(path: Path) -> dict:
+    meta: dict = {}
+    if path.exists():
+        for line in path.read_text().splitlines():
+            if "=" in line:
+                k, _, v = line.partition("=")
+                meta[k.strip()] = v.strip()
+    return meta
+
+
+@app.command()
 def generate(
     base: str = typer.Argument(..., help="A benign sample to derive variants from."),
     count: int = typer.Option(10, "--count"),
