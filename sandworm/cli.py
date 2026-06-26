@@ -153,6 +153,50 @@ def plugins(plugin_dir: str = typer.Option("", "--dir", help="Extra plugin direc
         typer.echo(f"  {a.name:<26} handles={sorted(a.handles)}  [{lane}]")
 
 
+@app.command(name="optimize-rules")
+def optimize_rules(
+    malicious_dir: str = typer.Argument(..., help="Directory of malicious samples the rules should catch."),
+    clean_dir: str = typer.Option("", "--clean", help="Extra directory of benign samples rules must NOT hit."),
+    generations: int = typer.Option(25, "--generations"),
+    seed: int = typer.Option(0, "--seed"),
+):
+    """Evolve a Pareto frontier of YARA rules (strict / balanced / loose) over a
+    malicious corpus + the bundled clean corpus — optimise detections, offline."""
+    from .detect.optimize import optimize
+    from .detect.yara_gen import CLEAN_CORPUS, generate_yara
+
+    register_builtins()
+    mal_paths = sorted(p for p in Path(malicious_dir).glob("*") if p.is_file())
+    if not mal_paths:
+        typer.secho("no samples found", fg=typer.colors.RED)
+        raise typer.Exit(1)
+    pool: list[bytes] = []
+    malicious: list[bytes] = []
+    for p in mal_paths:
+        sample = Sample.from_path(p)
+        malicious.append(sample.data)
+        result = analyze_sample(sample, enable_dynamic=False)
+        for rule in generate_yara(result.store, sample):
+            pool.extend(rule.strings)
+    pool = list(dict.fromkeys(pool))
+    clean = list(CLEAN_CORPUS)
+    if clean_dir:
+        clean += [p.read_bytes() for p in Path(clean_dir).glob("*") if p.is_file()]
+
+    front = optimize(pool, malicious, clean, generations=generations, seed=seed)
+    picks = front.pick()
+    if not picks:
+        typer.secho("no rule strings extracted — nothing to optimise", fg=typer.colors.YELLOW)
+        raise typer.Exit(0)
+    typer.secho(f"Pareto frontier: {len(front.points)} non-dominated rule(s)\n", fg=typer.colors.GREEN)
+    for label, s in picks.items():
+        typer.secho(f"# {label}: recall={s.recall:.2f} fp_rate={s.fp_rate:.2f} cost={s.cost:.2f}",
+                    fg=typer.colors.CYAN)
+        typer.echo(s.candidate.to_rule(f"SANDWORM_OPT_{label.upper()}",
+                   {"objective": label, "recall": s.recall, "fp_rate": s.fp_rate}).to_yara())
+        typer.echo("")
+
+
 def _latest_run(cfg) -> str:
     runs = cfg.work_dir / "runs"
     if not runs.exists():
