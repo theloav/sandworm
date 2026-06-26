@@ -1,6 +1,9 @@
 [
   {
-    "_comment": "SYNTHETIC recorded volatility3 report for offline demo of the SANDWORM memory lane. Shaped as the operator-captured JSON our normalizer ingests: [{plugin, rows}, ...]. malfind rows carry an injected RWX region in the process the loader hollowed, corroborating T1055 from memory.",
+    "_comment": "SYNTHETIC recorded volatility3 report for offline demo of the SANDWORM memory lane. Shaped as the operator-captured JSON our normalizer ingests: [{plugin, rows}, ...]. malfind rows carry an injected RWX region in the process the loader hollowed, corroborating T1055 from memory. The leading target_sha256 element binds this report to samples/synthetic/loader_demo.exe — the binary it was captured from; SANDWORM refuses to fold it into any other sample.",
+    "target_sha256": "10162bac44ed65caf0b4b8cb1dd6ff78522719e3d26580d9f0c63debeefd44c1"
+  },
+  {
     "plugin": "windows.pslist.PsList",
     "rows": [
       {"PID": 1200, "PPID": 900, "ImageFileName": "explorer.exe"},

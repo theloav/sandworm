@@ -47,6 +47,25 @@ class RunResult:
     notes: list[str] = field(default_factory=list)
 
 
+def _report_target_hash(report: object) -> str | None:
+    """The sha256 of the sample a recorded report was captured from, if declared.
+
+    A recorded report describes ONE specific run of ONE specific binary. We carry
+    that provenance as ``target_sha256`` so the report can only be attributed back
+    to the sample it actually came from. CAPE reports are a dict (top-level key);
+    vol3 reports are a list of plugin sections (we scan for a leading meta element
+    carrying the key). Returns ``None`` when the report declares no provenance.
+    """
+    if isinstance(report, dict):
+        h = report.get("target_sha256")
+        return str(h).lower() if h else None
+    if isinstance(report, list):
+        for section in report:
+            if isinstance(section, dict) and section.get("target_sha256"):
+                return str(section["target_sha256"]).lower()
+    return None
+
+
 def _ingest_recorded_reports(
     *, cape_report: str | None, memory_report: str | None, ctx: Context, sample: Sample,
     store: EvidenceStore, notes: list[str], audit: AuditLogger, run_id: str,
@@ -59,54 +78,66 @@ def _ingest_recorded_reports(
     static analysis and runs offline. (Live detonation stays gated in the
     registry.) The resulting ``dynamic.*``/``memory.*`` evidence automatically
     upgrades technique standing inferred → observed downstream.
+
+    Two provenance gates protect accuracy — a recorded run is only this sample's
+    behaviour if it was *captured from this sample*:
+
+    1. **Format** — the bundled CAPE/vol3 adapters normalize a Windows/PE sandbox
+       run, so the report only belongs to a pe/dll sample. (A real PE always
+       triages 'pe' via the MZ magic, so 'generic'/'unknown' are not PE.)
+    2. **Identity** — the report must declare ``target_sha256`` and it must equal
+       this sample's hash. This is the gate that stops a recorded loader run from
+       being folded into an unrelated PE (e.g. WannaCry) and reported as that
+       file's confirmed loader.exe→notepad injection / C2 that never happened.
+
+    On any mismatch we refuse and fall back to static-only rather than
+    ingest-and-warn, so the verdict is never inflated by another binary's run.
     """
     import json
 
     ran: list[str] = []
     ref = f"sample:{sample.sha256}"
-    # The bundled CAPE/vol3 adapters normalize a *Windows/PE* sandbox run, so such
-    # a report belongs ONLY to a PE/DLL sample. Folding it into anything else (a
-    # PHP shell, an ELF, a script, or a 'generic' blob like C source) would
-    # attribute another binary's behaviour to this file — inflating the verdict
-    # with injection/persistence/C2 that never happened here. A real PE always
-    # triages as 'pe' (the MZ magic is reliable), so 'generic'/'unknown' are NOT
-    # treated as PE: we refuse the mismatch rather than ingest-and-warn.
     win_report_ok = sample.format_hint in {"pe", "dll"}
 
-    if cape_report and Path(cape_report).exists():
+    def _ingest(path: str, kind: str, normalize, source: str, unit: str) -> None:
+        report = json.loads(Path(path).read_text())
         if not win_report_ok:
             notes.append(
-                f"⚠ refused the recorded dynamic report: it is a Windows/PE sandbox run but this sample is "
-                f"'{sample.format_hint}'. It describes a different binary, so it is NOT folded into the verdict "
-                "(analysed static-only). Provide a report produced from THIS sample, or run static-only."
+                f"⚠ refused the recorded {kind} report: it is a Windows/PE run but this sample is "
+                f"'{sample.format_hint}'. It describes a different binary, so it is NOT folded into the "
+                "verdict (analysed static-only). Provide a report captured from THIS sample, or run static-only."
             )
-        else:
-            from ..analyzers.dynamic.windows_cape import normalize_cape_report
+            return
+        declared = _report_target_hash(report)
+        if declared is None:
+            notes.append(
+                f"⚠ refused the recorded {kind} report: it does not declare which sample it was captured from "
+                "(no target_sha256), so its runtime events cannot be attributed to this file (analysed "
+                "static-only). Bind the report to its source sample to ingest it."
+            )
+            return
+        if declared != sample.sha256.lower():
+            notes.append(
+                f"⚠ refused the recorded {kind} report: it was captured from a different sample "
+                f"(sha256 {declared[:12]}…), not this one ({sample.sha256[:12]}…). Its process tree / "
+                "injection / C2 are that binary's behaviour, not this file's — analysed static-only."
+            )
+            return
+        items = list(normalize(report, ctx, ref))
+        store.extend(items)
+        ran.append(f"{source}(replay)")
+        notes.append(f"ingested recorded {kind} report ({len(items)} {unit}; replay — no live detonation)")
+        audit.log(run_id=run_id, action=f"ingest_{kind}_report", source=source,
+                  sample_hash=sample.sha256, events=len(items), path=str(path))
 
-            report = json.loads(Path(cape_report).read_text())
-            items = list(normalize_cape_report(report, ctx, ref))
-            store.extend(items)
-            ran.append("dynamic.windows.cape(replay)")
-            notes.append(f"ingested recorded dynamic report ({len(items)} events; replay — no live detonation)")
-            audit.log(run_id=run_id, action="ingest_dynamic_report", source="dynamic.windows.cape",
-                      sample_hash=sample.sha256, events=len(items), path=str(cape_report))
+    if cape_report and Path(cape_report).exists():
+        from ..analyzers.dynamic.windows_cape import normalize_cape_report
+        _ingest(cape_report, "dynamic", normalize_cape_report, "dynamic.windows.cape", "events")
 
     if memory_report and Path(memory_report).exists():
-        if not win_report_ok:
-            notes.append(
-                f"⚠ refused the recorded memory report: it is Windows-oriented but this sample is "
-                f"'{sample.format_hint}' — it does not describe this file (analysed static-only)."
-            )
-        else:
-            from ..analyzers.memory.vol3 import normalize_memory_report
+        from ..analyzers.memory.vol3 import normalize_memory_report
+        _ingest(memory_report, "memory", normalize_memory_report, "memory.vol3", "artifacts")
 
-            report = json.loads(Path(memory_report).read_text())
-            items = list(normalize_memory_report(report, ctx, ref))
-            store.extend(items)
-            ran.append("memory.vol3(replay)")
-            notes.append(f"ingested recorded memory report ({len(items)} artifacts; replay — no live detonation)")
-            audit.log(run_id=run_id, action="ingest_memory_report", source="memory.vol3",
-                      sample_hash=sample.sha256, artifacts=len(items), path=str(memory_report))
     return ran
 
 

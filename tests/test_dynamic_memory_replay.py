@@ -19,16 +19,19 @@ from sandworm.reconstruct.runtime import build_runtime_view
 from sandworm.reporting.summary import build_summary
 
 
-def _pe_sample() -> Sample:
-    # A minimal PE-format sample (MZ magic) so the Windows replay reports are a
-    # format match and get ingested (a Windows report for a non-PE sample is
-    # refused as belonging to a different binary).
-    return Sample.from_bytes("loader.exe", b"MZ" + b"\x00" * 256)
+def _pe_sample(samples_dir: Path | None = None) -> Sample:
+    # The exact demo-loader the recorded reports were captured from: the fixtures
+    # carry its sha256 as target_sha256, so it clears both the format gate (PE)
+    # and the identity gate (hash match). Any *other* binary — even another PE —
+    # is refused, because the report describes this loader, not that file.
+    if samples_dir is not None:
+        return Sample.from_path(samples_dir / "loader_demo.exe")
+    return Sample.from_bytes("loader_demo.exe", b"MZ" + b"\x00" * 256)
 
 
 def _run(samples_dir: Path):
     return analyze_sample(
-        _pe_sample(),
+        _pe_sample(samples_dir),
         enable_dynamic=False,  # isolation NOT verified — proves replay is ungated
         cape_report=str(samples_dir / "recorded_cape_report.json"),
         memory_report=str(samples_dir / "recorded_vol3_report.json"),
@@ -206,6 +209,40 @@ def test_mismatched_windows_report_on_php_is_refused():
     assert "T1055" not in {m.technique_id for m in result.mappings}
     summary = build_summary(result.store, result.mappings, result.phases, isolated=False)
     assert summary.risk == "Low"
+
+
+def test_recorded_report_refused_on_a_different_pe(samples_dir):
+    # The WannaCry false-positive: a recorded loader run must NOT be folded into a
+    # *different* PE just because both are PE. The report is bound by target_sha256
+    # to loader_demo.exe, so any other PE is refused and analysed static-only —
+    # its process tree / injection / C2 are NOT this file's behaviour.
+    other_pe = Sample.from_bytes("Ransomware.wannacry.exe", b"MZ" + b"\x90" * 512)
+    assert other_pe.sha256 != _pe_sample(samples_dir).sha256
+    result = analyze_sample(
+        other_pe, enable_dynamic=False,
+        cape_report=str(samples_dir / "recorded_cape_report.json"),
+        memory_report=str(samples_dir / "recorded_vol3_report.json"),
+    )
+    assert result.triage.fmt == "pe"  # format gate passes — identity gate is what refuses
+    assert any("different sample" in n.lower() for n in result.notes)
+    assert not any(it.source.startswith(("dynamic.", "memory.")) for it in result.store)
+    # no foreign runtime → not falsely upgraded to observed injection/C2
+    assert "T1055" not in {m.technique_id for m in result.mappings}
+    rv = build_runtime_view(result.store)
+    assert rv.observed is False and rv.process_tree == []
+
+
+def test_unbound_report_is_refused(samples_dir, tmp_path):
+    # A recorded report with no target_sha256 has untraceable provenance, so it is
+    # refused (we cannot prove it describes this sample) — evidence discipline.
+    import json
+    rep = json.loads((samples_dir / "recorded_cape_report.json").read_text())
+    rep.pop("target_sha256", None)
+    unbound = tmp_path / "unbound_cape.json"
+    unbound.write_text(json.dumps(rep))
+    result = analyze_sample(_pe_sample(samples_dir), enable_dynamic=False, cape_report=str(unbound))
+    assert any("does not declare" in n for n in result.notes)
+    assert not any(it.source.startswith("dynamic.") for it in result.store)
 
 
 def test_generic_format_also_refuses_windows_report(samples_dir):
