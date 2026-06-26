@@ -1,17 +1,24 @@
 {
   "_comment": "SYNTHETIC recorded CAPE/DRAKVUF report for offline demo of the SANDWORM dynamic lane. No real malware was executed to produce this; it models a benign injection-loader so 'sandworm analyze samples/synthetic/loader_demo.exe --cape-report' can demonstrate inferred -> observed upgrades. See docs/handling-real-samples.md.",
   "target_sha256": "10162bac44ed65caf0b4b8cb1dd6ff78522719e3d26580d9f0c63debeefd44c1",
+  "start_time": "2026-06-25T17:15:00Z",
   "behavior": {
     "processes": [
-      {"pid": 1840, "ppid": 1200, "process_name": "loader.exe", "parent_name": "explorer.exe", "command_line": "loader.exe"},
-      {"pid": 2604, "ppid": 1840, "process_name": "notepad.exe", "parent_name": "loader.exe", "command_line": "C:\\Windows\\System32\\notepad.exe"},
-      {"pid": 3120, "ppid": 1840, "process_name": "cmd.exe", "parent_name": "loader.exe", "command_line": "cmd.exe /c vssadmin delete shadows /all /quiet"}
+      {"pid": 1840, "ppid": 1200, "process_name": "loader.exe", "parent_name": "explorer.exe", "command_line": "loader.exe", "t": 0.0},
+      {"pid": 2604, "ppid": 1840, "process_name": "notepad.exe", "parent_name": "loader.exe", "command_line": "C:\\Windows\\System32\\notepad.exe", "t": 0.18},
+      {"pid": 3120, "ppid": 1840, "process_name": "cmd.exe", "parent_name": "loader.exe", "command_line": "cmd.exe /c vssadmin delete shadows /all /quiet", "t": 0.62}
     ],
-    "apistats_flat": ["VirtualAllocEx", "WriteProcessMemory", "CreateRemoteThread", "RegSetValueExW", "WinHttpConnect"],
-    "regkey_written": ["HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\Updater"]
+    "api_calls": [
+      {"api": "VirtualAllocEx", "t": 0.12},
+      {"api": "WriteProcessMemory", "t": 0.13},
+      {"api": "CreateRemoteThread", "t": 0.15},
+      {"api": "RegSetValueExW", "t": 0.30},
+      {"api": "WinHttpConnect", "t": 0.50}
+    ],
+    "regkey_written": [{"key": "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\Updater", "t": 0.31}]
   },
-  "network": {"hosts": ["185.234.218.42"]},
+  "network": {"hosts": [{"host": "185.234.218.42", "t": 0.51}]},
   "dropped": [
-    {"name": "C:\\Users\\Public\\svc.dll", "sha256": "9f2c1b7a4e6d0a3c8b5f1e2d7c6a9b0f3e8d4c1a2b5f7e9d0c3a6b8f1e2d4c7a"}
+    {"name": "C:\\Users\\Public\\svc.dll", "sha256": "9f2c1b7a4e6d0a3c8b5f1e2d7c6a9b0f3e8d4c1a2b5f7e9d0c3a6b8f1e2d4c7a", "t": 0.45}
   ]
 }

@@ -110,6 +110,32 @@ def test_lifecycle_assigns_each_technique_to_one_phase():
     assert placement.get("injection", []) == ["T1055"]
 
 
+def test_temporal_timeline_orders_events_by_offset(samples_dir):
+    from sandworm.reconstruct.temporal import build_temporal_timeline, render_timeline_svg
+    result = _run(samples_dir)
+    tl = build_temporal_timeline(result.store)
+    assert tl.observed is True
+    offsets = [e.offset for e in tl.events]
+    assert offsets == sorted(offsets)               # strictly time-ordered
+    assert tl.events[0].offset == 0.0               # process start anchors T+0
+    # the injection burst precedes the C2 call, which precedes the vssadmin spawn
+    by_text = {e.text: e.offset for e in tl.events}
+    valloc = next(o for t, o in by_text.items() if "VirtualAllocEx" in t)
+    egress = next(o for t, o in by_text.items() if "185.234.218.42" in t)
+    assert valloc < egress
+    # absolute clock time is derived from start_time, and the SVG renders
+    assert any(e.abs_time for e in tl.events)
+    assert "<svg" in render_timeline_svg(tl)
+
+
+def test_temporal_timeline_empty_on_static_only(samples_dir):
+    sample = Sample.from_path(samples_dir / "benign_dropper.sh")
+    result = analyze_sample(sample, enable_dynamic=False)
+    from sandworm.reconstruct.temporal import build_temporal_timeline
+    tl = build_temporal_timeline(result.store)
+    assert tl.observed is False and tl.events == []  # no invented timing
+
+
 def test_memory_lane_detects_hidden_process(samples_dir):
     # psscan sees PID 666 (svc_hidden.exe) that pslist does not → unlinked EPROCESS,
     # surfaced as an observed hidden process driving T1014 (Rootkit).

@@ -122,7 +122,7 @@ _TEMPLATE = """<!DOCTYPE html>
  </div>
 </div></div>
 <nav><div class="inner">
- <a href="#summary">Summary</a><a href="#lifecycle">Lifecycle</a><a href="#runtime">Runtime</a><a href="#graph">Reasoning graph</a>
+ <a href="#summary">Summary</a><a href="#lifecycle">Lifecycle</a><a href="#runtime">Runtime</a><a href="#timeline-temporal">Timeline</a><a href="#graph">Reasoning graph</a>
  {% if layers %}<a href="#deobf">Deobfuscation</a>{% endif %}<a href="#attack">ATT&amp;CK</a>
  <a href="#findings">Findings</a><a href="#differential">Differential</a><a href="#iocs">IOCs</a><a href="#coverage">Coverage</a>
  <a href="#detections">Detections</a><a href="#assessment">Assessment</a><a href="#appendix">Evidence</a>
@@ -209,6 +209,17 @@ _TEMPLATE = """<!DOCTYPE html>
   <div class="card ph"><div class="k">⏳ Memory analysis</div><div class="v">Pending — injected regions, hidden processes</div></div>
  </div>
  <p class="hint">ℹ️ Provide a recorded report offline: <code>sandworm analyze sample --cape-report report.json --memory-report mem.json</code> (replay ingests prior evidence; it is not a live detonation). Or detonate inside a verified isolated environment.</p>
+ {% endif %}
+</section>
+
+<section id="timeline-temporal">
+ <h2>Temporal timeline {% if not temporal.observed %}<span class="muted">— pending</span>{% endif %}</h2>
+ {% if temporal.observed %}
+ <p class="muted">The order events happened in, reconstructed from recorded relative offsets. Malware is a story: <i>checked for analysis → called home → persisted → encrypted</i> is actionable; "it encrypted files" is not.</p>
+ {{ temporal_svg|safe }}
+ <div class="tree" style="margin-top:10px">{% for e in temporal.events %}<div class="row"><span class="ppid">{{ "%-11s"|format(e.label) }}</span>{% if e.abs_time %}<span class="muted">{{ e.abs_time }}  </span>{% endif %}<span style="color:{{ e.color }}">●</span> <span class="pname">{{ e.text }}</span> <span class="muted">[{{ e.status }}]</span></div>{% endfor %}</div>
+ {% else %}
+ <p class="muted">No timed events for this run. A relative-offset timeline populates from the dynamic lane (CAPE/DRAKVUF API-call timestamps); a static-only run has no observed timing to plot, so this stays <b>pending</b> rather than inventing an order.</p>
  {% endif %}
 </section>
 
@@ -747,6 +758,9 @@ def render_html(inp: ReportInputs) -> str:
     evidence_weights = _evidence_weights(inp.store, inp.mappings)
     readiness_level, readiness_rows = _detection_readiness(inp.coverage, iocs, runtime)
     graph_svg, graph_stats = _graph_svg(inp.graph)
+    from ..reconstruct.temporal import build_temporal_timeline, render_timeline_svg
+    temporal = build_temporal_timeline(inp.store)
+    temporal_svg = render_timeline_svg(temporal)
     isolated = inp.isolation.startswith("verified")
     summary = build_summary(inp.store, inp.mappings, inp.phases, isolated=isolated)
     breakdowns = {m.technique_id: confidence_breakdown(inp.store, m) for m in inp.mappings}
@@ -774,6 +788,8 @@ def render_html(inp: ReportInputs) -> str:
         runtime=runtime,
         runtime_mismatch=runtime_mismatch,
         proc_tree=proc_tree,
+        temporal=temporal,
+        temporal_svg=temporal_svg,
         graph_legend=_GRAPH_LEGEND,
         readiness_level=readiness_level,
         readiness_rows=readiness_rows,

@@ -36,6 +36,18 @@ def normalize_cape_report(report: dict, ctx: Context, ref: str) -> Iterator[Evid
     executes the sample, so it is safe to call without the isolation gate.
     """
     behavior = report.get("behavior", {})
+    start = report.get("start_time")  # ISO; lets the timeline show absolute times too
+
+    def _t(details: dict, t: object) -> dict:
+        # A relative offset (seconds from process start) recorded by the sandbox
+        # drives the temporal timeline. Stored in details so the causal timeline
+        # (which sorts on EvidenceItem.ts) is unaffected.
+        if isinstance(t, (int, float)):
+            details = {**details, "t_offset": float(t), "t_label": f"T+{float(t):.3f}s"}
+            if start:
+                details["t_start"] = start
+        return details
+
     # Process tree (parent → child), the substrate for the runtime process graph.
     for proc in behavior.get("processes", []):
         yield ctx.ev(
@@ -44,31 +56,38 @@ def normalize_cape_report(report: dict, ctx: Context, ref: str) -> Iterator[Evid
             operation="spawn",
             subject={"pid": proc.get("ppid"), "name": proc.get("parent_name")},
             object={"pid": proc.get("pid"), "name": proc.get("process_name")},
-            details={"command_line": proc.get("command_line")},
+            details=_t({"command_line": proc.get("command_line")}, proc.get("t")),
             confidence=0.9,
             evidence_refs=[ref],
         )
-    # API calls of interest (injection etc.). Mapped to ATT&CK via has_sink.
-    for call in behavior.get("apistats_flat", []):
+    # API calls of interest (injection etc.). Mapped to ATT&CK via has_sink. A
+    # structured ``api_calls: [{api, t}]`` carries per-call timing; ``apistats_flat``
+    # (a bare list) stays supported for reports without timestamps.
+    api_events = behavior.get("api_calls") or [{"api": a} for a in behavior.get("apistats_flat", [])]
+    for call in api_events:
+        api = call.get("api") if isinstance(call, dict) else call
         yield ctx.ev(
             source=SOURCE,
             artifact="api_call",
             operation="exec",
             subject={"analyzer": SOURCE},
-            object={"api": call},
-            details={},
+            object={"api": api},
+            details=_t({}, call.get("t") if isinstance(call, dict) else None),
             confidence=0.7,
             evidence_refs=[ref],
         )
-    # Network egress, routed to the simulated responder during detonation.
+    # Network egress, routed to the simulated responder during detonation. Hosts
+    # may be a bare string or ``{host, t}``.
     for host in report.get("network", {}).get("hosts", []):
+        hv = host.get("host") if isinstance(host, dict) else host
         yield ctx.ev(
             source=SOURCE,
             artifact="network",
             operation="connect",
             subject={"analyzer": SOURCE},
-            object={"kind": "ipv4" if _looks_ipv4(str(host)) else "domain", "value": host, "host": host},
-            details={"ioc": True, "false_positive_risk": "low", "note": "egress observed (routed to simulated network)"},
+            object={"kind": "ipv4" if _looks_ipv4(str(hv)) else "domain", "value": hv, "host": hv},
+            details=_t({"ioc": True, "false_positive_risk": "low", "note": "egress observed (routed to simulated network)"},
+                       host.get("t") if isinstance(host, dict) else None),
             confidence=0.85,
             evidence_refs=[ref],
         )
@@ -80,19 +99,20 @@ def normalize_cape_report(report: dict, ctx: Context, ref: str) -> Iterator[Evid
             operation="create",
             subject={"analyzer": SOURCE},
             object={"path": f.get("name"), "sha256": f.get("sha256")},
-            details={},
+            details=_t({}, f.get("t")),
             confidence=0.8,
             evidence_refs=[ref],
         )
-    # Registry persistence writes.
+    # Registry persistence writes. Entries may be a bare string or ``{key, t}``.
     for key in behavior.get("regkey_written", []):
+        kv = key.get("key") if isinstance(key, dict) else key
         yield ctx.ev(
             source=SOURCE,
             artifact="registry",
             operation="write",
             subject={"analyzer": SOURCE},
-            object={"key": key},
-            details={},
+            object={"key": kv},
+            details=_t({}, key.get("t") if isinstance(key, dict) else None),
             confidence=0.75,
             evidence_refs=[ref],
         )
