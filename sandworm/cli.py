@@ -153,6 +153,33 @@ def plugins(plugin_dir: str = typer.Option("", "--dir", help="Extra plugin direc
         typer.echo(f"  {a.name:<26} handles={sorted(a.handles)}  [{lane}]")
 
 
+@app.command()
+def generate(
+    base: str = typer.Argument(..., help="A benign sample to derive variants from."),
+    count: int = typer.Option(10, "--count"),
+    out: str = typer.Option("variants", "--out", help="Output directory."),
+    seed: int = typer.Option(0, "--seed"),
+    verify: bool = typer.Option(True, "--verify/--no-verify", help="Check each variant keeps the base's techniques."),
+):
+    """Generate benign, semantics-preserving variants of a sample for detection
+    engineering (stress-test YARA/Sigma; feed the rule optimiser). Never adds
+    capability — only perturbs the surface and rotates IOCs to reserved ranges."""
+    from .enrich.generate import generate_variants, label_preserved
+
+    sample = Sample.from_path(base)
+    out_dir = Path(out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    variants = generate_variants(sample, count, seed=seed)
+    typer.secho(f"generated {len(variants)} variant(s) of {sample.name} → {out_dir}/", fg=typer.colors.GREEN)
+    for v in variants:
+        (out_dir / v.name).write_bytes(v.data)
+        line = f"  {v.name}  [{', '.join(v.mutations)}]"
+        if verify:
+            ok = label_preserved(sample, Sample.from_bytes(v.name, v.data))
+            line += "  label=preserved" if ok else "  label=CHANGED"
+        typer.echo(line)
+
+
 @app.command(name="optimize-rules")
 def optimize_rules(
     malicious_dir: str = typer.Argument(..., help="Directory of malicious samples the rules should catch."),
