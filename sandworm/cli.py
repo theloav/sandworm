@@ -33,6 +33,7 @@ def analyze(
     cape_report: str = typer.Option("", "--cape-report", help="Ingest a recorded CAPE/DRAKVUF JSON report (offline replay; not a live detonation)."),
     memory_report: str = typer.Option("", "--memory-report", help="Ingest a recorded volatility3 JSON report (offline replay)."),
     store_sample: bool = typer.Option(False, "--store", help="Defang+store the sample encrypted-at-rest."),
+    stream: bool = typer.Option(False, "--stream", help="Stream evidence live (ALERT on high-signal findings) as it is discovered."),
 ):
     """Analyze a sample end-to-end and write an HTML report."""
     cfg = get_config()
@@ -48,10 +49,21 @@ def analyze(
     if store_sample:
         SampleStore(cfg).store(sample)
 
+    feed = None
+    if stream:
+        from .reporting.stream import StreamFeed
+        def _emit(line: str) -> None:
+            typer.secho(line, fg=typer.colors.RED if line.startswith("ALERT") else None)
+        feed = StreamFeed(sink=_emit)
+        typer.secho("── live evidence feed ──", fg=typer.colors.CYAN)
+
     result = analyze_sample(
         sample, config=cfg, enable_dynamic=not no_dynamic,
         cape_report=cape_report or None, memory_report=memory_report or None,
+        on_evidence=feed,
     )
+    if feed is not None:
+        typer.secho(f"── feed complete: {len(feed.lines)} events, {feed.alerts} alert(s) ──\n", fg=typer.colors.CYAN)
     run_dir = persist_run(result, cfg)
 
     typer.secho(f"run {result.run_id}  format={result.triage.fmt}  isolated={result.isolated}", fg=typer.colors.CYAN)

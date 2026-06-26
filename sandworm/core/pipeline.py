@@ -149,6 +149,7 @@ def analyze_sample(
     enable_dynamic: bool = True,
     cape_report: str | None = None,
     memory_report: str | None = None,
+    on_evidence=None,
 ) -> RunResult:
     config = config or get_config()
     run_id = run_id or uuid.uuid4().hex[:12]
@@ -157,6 +158,10 @@ def analyze_sample(
 
     register_builtins()
     store = EvidenceStore()
+    # Real-time streaming: subscribe before any analyzer runs so findings are
+    # emitted as they are discovered, not after the batch completes.
+    if on_evidence is not None:
+        store.subscribe(on_evidence)
     notes: list[str] = []
 
     # --- Triage / format routing ---

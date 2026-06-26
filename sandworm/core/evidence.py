@@ -93,14 +93,29 @@ class EvidenceStore:
         self._items: dict[str, EvidenceItem] = {}
         self._order: list[str] = []
         self._lock = threading.Lock()
+        self._subscribers: list = []
+
+    def subscribe(self, callback) -> None:
+        """Register ``callback(item)`` to fire once per newly-appended item.
+
+        Enables real-time consumers (a streaming CLI, an SSE endpoint) to act on
+        early signals while deeper analysis is still running — incident responders
+        do not have to wait for the full report. Callbacks fire *outside* the lock
+        so a subscriber may safely read the store; duplicates are not re-notified.
+        """
+        self._subscribers.append(callback)
 
     def append(self, item: EvidenceItem) -> str:
         with self._lock:
             iid = item.id
-            if iid not in self._items:
+            is_new = iid not in self._items
+            if is_new:
                 self._items[iid] = item
                 self._order.append(iid)
-            return iid
+        if is_new and self._subscribers:
+            for cb in self._subscribers:
+                cb(item)
+        return iid
 
     def extend(self, items: Iterable[EvidenceItem]) -> list[str]:
         return [self.append(i) for i in items]
