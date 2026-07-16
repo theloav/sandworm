@@ -15,6 +15,10 @@ dist/
 /samples/real/
 *.report.html
 
+# Goodware corpus contents (large / redistribution-restricted); keep the README
+/docker/clean_corpus/*
+!/docker/clean_corpus/README.md
+
 # Windows ADS artifacts
 *:Zone.Identifier
 *.Zone.Identifier

@@ -86,6 +86,22 @@ def deobfuscate_js(code: str) -> list[dict]:
     return layers
 
 
+def deobfuscate_vbscript(code: str) -> list[dict]:
+    layers: list[dict] = []
+    # Chr(nn)&Chr(nn)&... string building (also ChrW). Decode contiguous runs.
+    for m in re.finditer(r"(?:Chr[W$]?\(\s*\d+\s*\)\s*[&+]?\s*){3,}", code, re.IGNORECASE):
+        nums = [int(x) for x in re.findall(r"Chr[W$]?\(\s*(\d+)\s*\)", m.group(), re.IGNORECASE)]
+        if nums:
+            dec = "".join(chr(n) for n in nums if 0 <= n < 0x110000)
+            layers.append({"function": "Chr()", "before": _clip(m.group()), "after": _clip(dec), "after_len": len(dec)})
+    # Embedded PowerShell -enc launched from the script.
+    for m in re.finditer(r"-[Ee](?:nc(?:odedCommand)?)?\s+([A-Za-z0-9+/=]{16,})", code):
+        dec_b64 = _try_b64(m.group(1))
+        if dec_b64:
+            layers.append({"function": "-EncodedCommand", "before": _clip(m.group(1)), "after": _clip(dec_b64), "after_len": len(dec_b64)})
+    return layers
+
+
 def deobfuscate_shell(code: str) -> list[dict]:
     layers: list[dict] = []
     # echo <base64> | base64 -d | sh
@@ -124,7 +140,19 @@ _SCRIPT_SINKS = {
         r"\bchmod\s+\+x\b": ("file", "make_executable", 0.5),
         r"crontab|/etc/cron": ("persistence", "cron", 0.7),
     },
+    "vbscript": {
+        r"\bCreateObject\s*\(\s*['\"]WScript\.Shell": ("process", "wscript_shell", 0.8),
+        r"\bCreateObject\s*\(\s*['\"]Shell\.Application": ("process", "shell_application", 0.75),
+        r"\.(Run|Exec)\s*\(": ("code_exec", "shell_run", 0.8),
+        r"\bExecuteGlobal\b|\bEval\s*\(": ("code_exec", "eval", 0.8),
+        r"\bGetObject\s*\(\s*['\"]winmgmts": ("discovery", "wmi", 0.6),
+        r"\bMSXML2\.XMLHTTP|\bWinHttp\.WinHttpRequest": ("network", "remote_download", 0.75),
+        r"\bADODB\.Stream\b": ("file", "adodb_stream_write", 0.6),
+        r"powershell(\.exe)?\b": ("process", "powershell_spawn", 0.7),
+    },
 }
+# HTA embeds VBScript and/or JScript; scan it with both sink tables.
+_SCRIPT_SINKS["hta"] = {**_SCRIPT_SINKS["vbscript"], **_SCRIPT_SINKS["javascript"]}
 
 
 def find_script_sinks(code: str, lang: str) -> list[tuple[str, str, float]]:
@@ -137,7 +165,7 @@ def find_script_sinks(code: str, lang: str) -> list[tuple[str, str, float]]:
 
 class ScriptAnalyzer(BaseAnalyzer):
     name = "static.script"
-    handles = {"script", "powershell", "javascript", "shell"}
+    handles = {"script", "powershell", "javascript", "shell", "vbscript", "hta"}
     requires_isolation = False
 
     def run(self, sample: Sample, ctx: Context) -> list[EvidenceItem]:
@@ -150,6 +178,11 @@ class ScriptAnalyzer(BaseAnalyzer):
             layers = deobfuscate_powershell(code)
         elif lang in ("javascript",):
             layers = deobfuscate_js(code)
+        elif lang in ("vbscript",):
+            layers = deobfuscate_vbscript(code)
+        elif lang in ("hta",):
+            # HTA can carry VBScript, JScript and encoded PowerShell — peel all.
+            layers = deobfuscate_vbscript(code) + deobfuscate_js(code) + deobfuscate_powershell(code)
         else:
             layers = deobfuscate_shell(code)
 

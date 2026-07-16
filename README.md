@@ -4,7 +4,7 @@
 
 <br/>
 
-![tests](https://img.shields.io/badge/tests-76%20passing-2ea043)
+![tests](https://img.shields.io/badge/tests-129%20passing-2ea043)
 ![lint](https://img.shields.io/badge/ruff%20%2B%20mypy-clean-2ea043)
 ![python](https://img.shields.io/badge/python-3.11%2B-3776ab)
 ![license](https://img.shields.io/badge/license-MIT-blue)
@@ -16,8 +16,8 @@
 
 SANDWORM is an isolated, multi-format malware reverse-engineering platform. It is
 *not* "another sandbox": every subsystem exists to serve one promise — take a
-sample, reconstruct its lifecycle from static, dynamic, and memory evidence, and
-produce explainable attack narratives, behavioral graphs, and defender-ready
+sample, reconstruct its lifecycle from **static, dynamic, and memory** evidence,
+and produce explainable attack narratives, behavioral graphs, and defender-ready
 detections (YARA + Sigma).
 
 It handles **PE/DLL, ELF (C/Rust/Go), PHP webshells, scripts
@@ -25,40 +25,286 @@ It handles **PE/DLL, ELF (C/Rust/Go), PHP webshells, scripts
 architecture — new formats are plugins, not core changes.
 
 Every conclusion is **traceable to evidence**, labeled **observed vs inferred**,
-explained through a **reasoning chain**, and turned into **actionable detections** —
-which makes SANDWORM an explainable malware-reasoning platform rather than a
-collection of parsers.
+scored by a **Bayesian confidence model**, explained through a **reasoning chain**,
+and turned into **actionable detections** — which makes SANDWORM an explainable
+malware-reasoning platform rather than a collection of parsers.
 
 ```bash
 pip install -e ".[dev]"
-sandworm analyze samples/synthetic/benign_webshell.php
-# → recursively-deobfuscated payload, behavioral graph, ATT&CK mappings (each with
-#   a confidence and a "why"), clean-tested YARA + Sigma, and a coverage score.
-sandworm ask "what execution sinks were found?"      # graph-grounded copilot
-sandworm plugins --dir plugins_example               # list analyzers + plugins
 
-# Dynamic + memory lanes via offline replay of recorded reports (no live
-# detonation — ingests prior evidence, so it runs without the isolation gate and
-# upgrades the matching ATT&CK techniques from inferred → observed):
-sandworm analyze samples/synthetic/benign_dropper.sh \
-  --cape-report samples/synthetic/recorded_cape_report.json \
+# Static analysis: recursively-deobfuscated payload, behavioral graph, ATT&CK
+# mappings (each with a Bayesian confidence and a "why"), clean-tested YARA + Sigma.
+sandworm analyze samples/synthetic/benign_webshell.php
+
+# Dynamic + memory lanes via offline replay of recorded reports — bound by sha256
+# to the sample they were captured from, so they cannot be misattributed:
+sandworm analyze samples/synthetic/loader_demo.exe \
+  --cape-report   samples/synthetic/recorded_cape_report.json \
   --memory-report samples/synthetic/recorded_vol3_report.json
+#   → temporal timeline, memory forensics (hidden procs / API hooks / carved config),
+#     and ATT&CK techniques upgraded inferred → observed.
+
+sandworm analyze sample --stream      # live evidence feed, ALERT on high-signal findings
+sandworm ask "what execution sinks were found?"   # graph-grounded copilot
 ```
+
+---
+
+## Table of contents
+
+- [The architectural spine: an Evidence Layer](#the-architectural-spine-an-evidence-layer)
+- [Architecture diagram](#architecture-diagram)
+- [How a sample flows through the pipeline](#how-a-sample-flows-through-the-pipeline)
+- [The three evidence lanes](#the-three-evidence-lanes)
+- [Reconstruction & the confidence model](#reconstruction--the-confidence-model)
+- [Advanced capabilities](#advanced-capabilities)
+- [Detections (YARA + Sigma + optimisation)](#detections-yara--sigma--optimisation)
+- [Isolation & safe handling](#isolation--safe-handling-enforced-in-code-not-docs)
+- [The plugin SDK](#the-plugin-sdk)
+- [CLI reference](#cli-reference)
+- [Tech stack](#tech-stack)
+- [Status — deferred to v2](#status--whats-deferred-to-v2-honest-list)
+- [Development](#development)
+
+---
 
 ## The architectural spine: an Evidence Layer
 
 Every engine emits **one** normalized schema — the `EvidenceItem` — instead of
 talking to each other. Producers (analyzers) only *write* EvidenceItems; consumers
-(behavioral graph, timeline, ATT&CK mapper, detection generators, LLM copilot)
-only *read* from the store. This decoupling is what makes SANDWORM extensible and
-explainable. `confidence` (0–1) is **required on every item**.
+(behavioral graph, timeline, ATT&CK mapper, detection generators, copilot) only
+*read* from the store. This decoupling is what makes SANDWORM extensible and
+explainable, and it is why most advanced features are **consumers of existing
+evidence, not new pipelines**.
+
+```python
+class EvidenceItem(BaseModel):
+    run_id: str
+    ts: str                       # ISO-8601 or monotonic offset
+    source: str                   # static.pe | dynamic.windows.cape | memory.vol3 | …
+    artifact: str                 # process | file | registry | network | api_call | string | …
+    operation: str                # create | write | read | connect | inject | spawn | decode | exec
+    subject: dict                 # who acted
+    object: dict                  # what was acted on
+    details: dict                 # format-specific, free-form
+    confidence: float             # 0..1 — REQUIRED on every item
+    evidence_refs: list[str]      # back-links to raw artifacts / parent layers
+```
+
+`confidence` is **required and validated on every item** — explainability depends
+on it. A content-hash `id` collapses duplicate observations so the graph never
+explodes. The store is append-only, thread-safe, and supports **pub/sub**
+(`subscribe()`) for live streaming.
+
+---
+
+## Architecture diagram
+
+```mermaid
+flowchart TB
+    SAMPLE([sample bytes]) --> TRIAGE[triage / format routing<br/>core/triage.py]
+
+    subgraph LANES["ANALYZER LANES  (analyzers/, plugin SDK)"]
+        direction TB
+        subgraph STATIC["STATIC  · always runs"]
+            COMMON[common: strings/IOCs/entropy/ransomware]
+            PE[pe / dll]
+            ELF[elf]
+            PHPL[php: recursive eval/base64 peel]
+            SCRIPT[script: ps1/js/sh]
+            OFFICE[office macros]
+            UNPACK["unpack: packer + entropy<br/>→ layered unpack_layer (#1)"]
+        end
+        subgraph DYN["DYNAMIC  · gated by isolation"]
+            CAPE[windows CAPE/DRAKVUF]
+            LIN[linux / script / php sandbox]
+        end
+        subgraph MEM["MEMORY  · offline replay"]
+            VOL3["vol3: pslist/psscan/malfind/<br/>apihooks/config (#4)"]
+        end
+    end
+
+    TRIAGE --> STATIC
+    TRIAGE -. "ISOLATION GATE<br/>core/isolation.py<br/>refuse → static-only" .-> DYN
+    REPORTS["recorded CAPE / vol3 JSON<br/>bound by target_sha256"] -- "replay (no detonation)" --> CAPE
+    REPORTS -- "replay" --> VOL3
+
+    STATIC --> STORE
+    DYN --> STORE
+    MEM --> STORE
+
+    STORE[("EvidenceStore<br/>the one schema · append-only<br/>content-hash ids · pub/sub")]
+
+    subgraph RECON["RECONSTRUCTION  (reconstruct/)"]
+        direction TB
+        ATTACK["attack_map → ATT&CK + Bayesian<br/>fusion (bayes.py, #5)"]
+        GRAPH[graph: behavioural reasoning graph]
+        NARR[narrative: lifecycle phases]
+        TIME[timeline: causal]
+        TEMP["temporal: T+offset timeline (#2)"]
+        RUN[runtime: process tree + memory facts]
+        LIN2["lineage: MinHash corpus / diff (#3)"]
+    end
+
+    subgraph OUT["DETECTION & REPORTING  (detect/, reporting/)"]
+        direction TB
+        YARA[yara_gen · clean-tested]
+        SIGMA[sigma_gen · behavioural + IOC]
+        OPT["optimize: GA Pareto frontier (#9)"]
+        COV[coverage matrix]
+        REPORT[self-contained HTML report]
+        STREAM["stream: live ALERT feed (#8)"]
+    end
+
+    STORE --> RECON
+    RECON --> OUT
+    STORE -- subscribe --> STREAM
+    STORE --> COPILOT["copilot: graph-grounded Q&A<br/>(provider-agnostic)"]
+    GEN["generate: benign variants (#6)"] -. feeds .-> OPT
+
+    classDef spine fill:#1f6feb,color:#fff,stroke:#79c0ff,stroke-width:2px;
+    class STORE spine;
+```
+
+<details>
+<summary>ASCII fallback (same architecture)</summary>
 
 ```
-sample ─▶ triage ─▶ analyzers ─┐
-                                ├─▶ EvidenceStore ─▶ graph / timeline / ATT&CK ─▶ report
-   (static always; dynamic ────┘                 └─▶ YARA + Sigma + coverage
-    only behind the isolation gate)              └─▶ copilot (graph-grounded)
+                              ┌──────────────┐
+   sample bytes ─────────────▶│   triage     │ format routing → pe/elf/php/script/office/generic
+                              └──────┬───────┘
+            ┌────────────────────────┼─────────────────────────────┐
+            ▼                        ▼ (ISOLATION GATE)             ▼ (offline replay,
+   ┌─────────────────┐     ┌───────────────────┐          bound by target_sha256)
+   │ STATIC (always) │     │ DYNAMIC (gated)   │          ┌───────────────────┐
+   │ common pe elf   │     │ CAPE/DRAKVUF      │◀───────  │ recorded CAPE JSON │
+   │ php script      │     │ linux/script/php  │          └───────────────────┘
+   │ office UNPACK#1 │     │ refuse→static-only│          ┌───────────────────┐
+   └────────┬────────┘     └─────────┬─────────┘  MEMORY  │ recorded vol3 JSON │──▶ vol3 #4
+            │                        │            ◀────────└───────────────────┘
+            └───────────┬────────────┴───────────────────────────┬─┘
+                        ▼
+            ╔═══════════════════════════════════════╗
+            ║   EvidenceStore  — the one schema      ║  append-only · content-hash ids · pub/sub
+            ╚═══════════════════╤═══════════════════╝
+        ┌───────────────────────┼─────────────────────────┐
+        ▼                       ▼                          ▼
+  RECONSTRUCT             DETECT + REPORT             COPILOT (graph-grounded)
+  attack_map (+Bayes #5)  yara/sigma + optimize #9    + STREAM #8 (subscribe → ALERT feed)
+  graph narrative         coverage matrix             generate #6 ─feeds─▶ optimize #9
+  timeline temporal #2    self-contained HTML report
+  runtime lineage #3
 ```
+</details>
+
+---
+
+## How a sample flows through the pipeline
+
+`core/pipeline.py :: analyze_sample()` orchestrates one run:
+
+1. **Triage** (`core/triage.py`) — magic-byte + heuristic format detection (MZ→pe,
+   ELF, `<?php`, shebang, OLE, …) selects which analyzer tags fire.
+2. **Isolation gate** (`core/isolation.py`) — decides whether the dynamic lane may
+   run *at all*. If isolation can't be verified, dynamic is **refused** and the run
+   continues static-only.
+3. **Static analyzers** run unconditionally; **dynamic** analyzers run only behind
+   the gate.
+4. **Recorded-report replay** (offline) — `--cape-report` / `--memory-report`
+   ingest prior evidence; this executes nothing, so it runs without the gate. Each
+   report must declare `target_sha256` matching the sample, or it is refused (a
+   recorded run is only a file's behaviour if it was *captured from that file*).
+5. **Reconstruction** — graph, lifecycle narrative, timelines, ATT&CK mapping with
+   Bayesian confidence.
+6. **Detections** — clean-tested YARA + Sigma, coverage matrix.
+7. **Report** — a single self-contained HTML file; every claim links to its
+   backing evidence.
+
+---
+
+## The three evidence lanes
+
+| Lane | Source prefix | Runs when | Provenance |
+|------|---------------|-----------|------------|
+| **Static** | `static.*` | always | the sample bytes |
+| **Dynamic** | `dynamic.*` | only behind the verified isolation gate (live), **or** offline replay of a recorded report | live = gated; replay = bound by `target_sha256` |
+| **Memory** | `memory.*` | volatility3 over an image, **or** offline replay of a recorded vol3 report | bound by `target_sha256` |
+
+Runtime-observed evidence (`dynamic.*` / `memory.*`) automatically **upgrades a
+technique's standing from inferred → observed** and feeds it into the Bayesian
+posterior with extra weight — "seeing it happen beats inferring it could."
+
+> **Provenance binding (why WannaCry won't absorb a demo run):** a recorded report
+> describes one run of one binary. Ingesting it into a *different* sample (even
+> another PE) would attribute a foreign process tree / injection / C2 to this file.
+> SANDWORM refuses unless the report's declared `target_sha256` matches the sample.
+
+### The PHP lane (the original differentiator)
+
+`analyzers/static/php.py` statically **evaluates (never executes)** the classic
+webshell stack — nested `eval`/`assert` around `base64_decode`, `gzinflate`,
+`gzuncompress`, `str_rot13`, `strrev`, `hex2bin`/`pack`, `chr()` — peeling one
+layer at a time, emitting each as evidence, and flagging the dangerous sink in the
+recovered payload (`system`/`exec`/`passthru`/`proc_open`, `preg_replace /e`,
+variable-function calls).
+
+---
+
+## Reconstruction & the confidence model
+
+`reconstruct/` turns evidence into meaning:
+
+- **`attack_map.py`** — rule + `attack_hint` mapping to ATT&CK; every mapping cites
+  its backing `EvidenceItem`s and explains *why*. No bare technique IDs.
+- **`bayes.py` — Bayesian confidence (#5).** Each technique is a hypothesis updated
+  in **log-odds**: a documented prior (0.12) is moved by the pooled evidence in each
+  lane, runtime lanes weighted higher, with a within-lane correlation discount.
+  Result: a weak static inference (0.45) climbs past 0.9 once dynamic **and** memory
+  independently corroborate it, while a lone weak single-import stays near the prior
+  (<0.6) and never inflates. The report shows the `prior → lane → aggregate` chain.
+- **`graph.py`** — the behavioural reasoning graph (Sample → Indicator → Capability
+  → Technique → Detection). Neo4j when configured, in-memory otherwise — same code.
+- **`narrative.py`** — lifecycle phases (each technique placed in exactly one).
+- **`timeline.py` / `temporal.py`** — causal ordering, and the **T+offset temporal
+  timeline (#2)** reconstructed from recorded relative offsets.
+- **`runtime.py`** — process tree + memory facts (network, dropped files, registry,
+  injected regions, hidden processes, hooks, carved config).
+- **`lineage.py`** — **cross-sample lineage (#3)** via MinHash over a behavioural
+  token set.
+
+---
+
+## Advanced capabilities
+
+Built on the evidence spine without core rewrites. Each is independently tested.
+
+| # | Capability | What it does | Try it |
+|---|------------|--------------|--------|
+| **1** | **Multi-stage unpacking** | Packer signatures (UPX/Themida/VMProtect/ASPack/…) + block entropy → layered `unpack_layer` evidence with parent→child links and confidence decay. Layer 0 detected (→T1027); layer 1 emitted as *pending* (needs emulation/dynamic) — never fabricated. | `analyze` any packed PE |
+| **2** | **Temporal timeline** | Reconstructs *when* events happened (relative offsets) into an SVG strip + `T+offset` event log with absolute clock time. Static-only stays "pending" rather than inventing timing. | bound replay (see quickstart) |
+| **3** | **Cross-sample lineage** | MinHash/LSH over behavioural tokens across a JSON corpus of persisted runs: nearest neighbours, technique/IOC diff, "which sample first introduced this C2". Offline; no Neo4j required. | `sandworm lineage` |
+| **4** | **Deep memory forensics** | Hidden processes (psscan∖pslist → T1014), in-memory API hooks (→ T1056.004 / T1055), and config carved from the heap — turning *"can encrypt"* into the observed event *"did encrypt 417 files"* (T1486 observed). | bound replay |
+| **5** | **Bayesian confidence** | Log-odds fusion across lanes replacing ad-hoc aggregation (see above). | every report |
+| **6** | **Synthetic generation** | Benign, **semantics-preserving** variants (identifier renaming, noise, IOC rotation to reserved `.test`/TEST-NET ranges) that still reach the same techniques — stress-test detections without real malware. | `sandworm generate <base>` |
+| **8** | **Real-time streaming** | `EvidenceStore.subscribe()` pub/sub turns a run into a live feed; `--stream` ALERT-flags high-signal findings (C2, injection, persistence, sinks, ransomware, hidden process) so responders act on early signals. | `analyze --stream` |
+| **9** | **Rule GA optimisation** | Multi-objective genetic search (recall / false-positive / cost) over a malicious + clean corpus → a **Pareto frontier** of YARA rules; pick strict / balanced / loose. Composes with #6. | `sandworm optimize-rules <dir>` |
+
+> Deliberately **not** built: LLM hypothesis generation, and *live* threat-intel
+> enrichment (VirusTotal/MISP/passive-DNS) — live network calls conflict with the
+> offline/isolated identity. An offline-snapshot enrichment would fit; live does not.
+
+---
+
+## Detections (YARA + Sigma + optimisation)
+
+- **`detect/yara_gen.py`** — every generated rule is auto-tested against a bundled
+  clean corpus; any rule that hits benign content is dropped or tightened.
+- **`detect/sigma_gen.py`** — behavioural rules (survive infrastructure changes) +
+  IOC rules (match rotating atoms), tagged with ATT&CK.
+- **`detect/optimize.py` (#9)** — evolves a Pareto frontier of rules so the analyst
+  chooses an operating point instead of accepting one fixed rule.
+
+---
 
 ## Isolation & safe handling (enforced in code, not docs)
 
@@ -66,40 +312,34 @@ sample ─▶ triage ─▶ analyzers ─┐
   verified, network-isolated, ephemeral detonation environment with all egress
   routed to a simulated responder (INetSim/FakeNet). If isolation can't be
   verified, SANDWORM **refuses to detonate**, logs an `IsolationError`, and falls
-  back to static-only. (See `tests/test_isolation_gate.py`.)
+  back to static-only. (`tests/test_isolation_gate.py`.)
+* **Provenance binding**: recorded dynamic/memory reports are bound to their source
+  sample by `target_sha256`; mismatched or unbound reports are refused.
 * **Defanged at rest** (`core/sample.py`): samples are stored only as
-  password-protected archives, never written executable to a shared path; loading
-  never auto-executes.
-* **Benign synthetic samples by default** (`samples/synthetic/`): the whole
-  pipeline demos end-to-end with zero real malware on disk.
+  password-protected archives, never written executable to a shared path.
+* **Benign synthetic samples by default** (`samples/synthetic/`): the whole pipeline
+  demos end-to-end with zero real malware on disk.
 * **Audit log** (`core/audit.py`): every analyzer action and every (refused)
   detonation is appended to a JSONL audit log.
-* **No real-network C2, no persistence, no propagation.** SANDWORM observes and
-  reports; it never reaches a real host and never acts on what it discovers.
+* **No real-network C2, no persistence, no propagation.**
 
 Full detail: [`docs/threat-model.md`](docs/threat-model.md),
 [`docs/handling-real-samples.md`](docs/handling-real-samples.md).
 
-## The PHP lane (the differentiator)
-
-`analyzers/static/php.py` statically *evaluates* (never executes) the classic
-webshell stack — nested `eval`/`assert` around `base64_decode`, `gzinflate`,
-`gzuncompress`, `str_rot13`, `strrev`, `hex2bin`/`pack`, and `chr()` chains —
-peeling one layer at a time, emitting each as evidence, and flagging the dangerous
-sink in the recovered payload (`system`/`exec`/`passthru`/`shell_exec`/`proc_open`,
-`preg_replace /e`, variable-function calls).
+---
 
 ## The plugin SDK
 
 A new analyzer is one file implementing the `Analyzer` protocol
-(`name`, `handles`, `requires_isolation`, `analyze(sample, ctx) -> [EvidenceItem]`):
+(`name`, `handles`, `requires_isolation`, `run(sample, ctx) -> [EvidenceItem]`):
 
 ```python
 from sandworm.analyzers.base import BaseAnalyzer
 class MyAnalyzer(BaseAnalyzer):
     name = "plugin.my"; handles = {"php"}; requires_isolation = False
-    def run(self, sample, ctx): return [ctx.ev(source="plugin.my", artifact="string",
-        operation="read", object={"hello": "world"}, confidence=0.5)]
+    def run(self, sample, ctx):
+        return [ctx.ev(source="plugin.my", artifact="string", operation="read",
+                       object={"hello": "world"}, confidence=0.5)]
 ANALYZER = MyAnalyzer()
 ```
 
@@ -107,32 +347,55 @@ Drop it in a directory, `sandworm plugins --dir <dir>`. No core changes. See
 [`docs/writing-an-analyzer.md`](docs/writing-an-analyzer.md) and
 [`plugins_example/`](plugins_example/example_analyzer.py).
 
+---
+
+## CLI reference
+
+| Command | Purpose |
+|---------|---------|
+| `sandworm analyze <sample>` | Full run → HTML report. Flags: `--cape-report`, `--memory-report`, `--stream`, `--no-dynamic`, `--store`, `-o`. |
+| `sandworm replay <run_id>` | Print the timeline + evidence for a persisted run. |
+| `sandworm lineage [run_id]` | Behavioural-lineage corpus over persisted runs + nearest-neighbour diff. |
+| `sandworm generate <base>` | Benign, label-preserving variants for detection engineering. |
+| `sandworm optimize-rules <dir>` | Evolve a Pareto frontier of YARA rules. |
+| `sandworm plugins [--dir D]` | List registered analyzers + discovered plugins. |
+| `sandworm ask "<question>"` | Graph-grounded copilot over the latest run. |
+
+---
+
 ## Tech stack
 
 Python 3.11+, pydantic v2, typer, jinja2. Optional, gracefully-degrading backends:
 lief/pefile/pyelftools/capstone + capa (static), oletools (macros), CAPE/DRAKVUF
 adapter (Windows dynamic), locked-down containers (Linux/script/PHP dynamic),
 volatility3 (memory), neo4j (graph; in-memory fallback), and a provider-agnostic
-LLM copilot (Anthropic / OpenAI-compatible / offline `mock` default).
+copilot (Anthropic / OpenAI-compatible / offline `mock` default). Absence of any
+backend degrades gracefully — the synthetic demos and the full test suite run
+**fully offline**.
+
+---
 
 ## Status — what's deferred to v2 (honest list)
 
 * Hypervisor-level instrumentation / Intel-PT tracing (we *integrate* CAPE/DRAKVUF,
   we don't build hypervisor instrumentation).
-* Firmware / SMM / bootkit analysis.
-* GNN graph embeddings & ML-based family clustering (today's graph is rule-built).
-* OS coverage beyond Windows + Linux (Mach-O is recognized but routed to a "not yet
-  supported" notice; full PS/JS dynamic interpreters need their container images).
-* Strong sample-at-rest crypto (the stdlib ZIP store is a *defang*, not AES — swap
-  in pyzipper/7z for engagements).
-* Real `auto_prepend`/seccomp builtin interception images for the dynamic lanes
-  (the adapters define the contract; the container images are an ops task).
+* Actual stub **emulation** for packer layer-1 recovery (#1 detects packing and
+  models the layers; recovering the unpacked bytes statically needs a Unicorn-based
+  emulator — the layer is emitted as *pending*, not fabricated).
+* Live threat-intel enrichment and LLM hypothesis generation (excluded by design;
+  see above).
+* GNN graph embeddings & ML-based family clustering (today's graph + lineage are
+  rule/MinHash-built).
+* Firmware / SMM / bootkit analysis; OS coverage beyond Windows + Linux.
+* Strong sample-at-rest crypto (the stdlib ZIP store is a *defang*, not AES).
+
+---
 
 ## Development
 
 ```bash
 pip install -e ".[dev]"
-ruff check sandworm tests && mypy sandworm && pytest
+ruff check sandworm tests && mypy sandworm && pytest      # 129 passing, fully offline
 ```
 
 CI (`.github/workflows/ci.yml`) runs ruff + mypy + pytest fully offline, no secrets.

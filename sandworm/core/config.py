@@ -37,6 +37,11 @@ class Config:
     # --- Encryption-at-rest for the sample store ---
     sample_store_password: str = field(default_factory=lambda: os.environ.get("SANDWORM_SAMPLE_PASSWORD", "infected"))
 
+    # Hard cap on how many bytes a single sample may be. Guards against an
+    # accidental multi-GB memory dump being loaded whole into RAM and scanned.
+    # 0 disables the cap. Default 512 MiB comfortably covers real malware.
+    max_sample_bytes: int = field(default_factory=lambda: int(os.environ.get("SANDWORM_MAX_SAMPLE_BYTES", 512 * 1024 * 1024)))
+
     # --- Graph backend ---
     neo4j_uri: str | None = field(default_factory=lambda: os.environ.get("SANDWORM_NEO4J_URI"))
     neo4j_user: str = field(default_factory=lambda: os.environ.get("SANDWORM_NEO4J_USER", "neo4j"))
@@ -60,6 +65,12 @@ class Config:
     @property
     def sample_dir(self) -> Path:
         d = self.work_dir / "samples"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    @property
+    def cache_dir(self) -> Path:
+        d = self.work_dir / "cache"
         d.mkdir(parents=True, exist_ok=True)
         return d
 

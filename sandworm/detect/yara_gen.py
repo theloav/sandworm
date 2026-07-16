@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from ..core.evidence import EvidenceStore
 from ..core.sample import Sample
@@ -41,7 +42,14 @@ class YaraRule:
     meta: dict = field(default_factory=dict)
 
     def matches(self, data: bytes) -> bool:
-        hits = sum(1 for s in self.strings if s and s in data)
+        # Anchors sourced from wide (UTF-16LE) strings must hit the sample's
+        # actual encoding, so each string matches in either representation —
+        # mirroring the `ascii wide` modifier in the serialized rule.
+        hits = sum(
+            1
+            for s in self.strings
+            if s and (s in data or s.decode("latin-1").encode("utf-16-le") in data)
+        )
         return hits >= self.condition_min
 
     def to_yara(self) -> str:
@@ -54,7 +62,7 @@ class YaraRule:
                 printable = s.decode("ascii")
                 if printable.isprintable():
                     esc = printable.replace("\\", "\\\\").replace('"', '\\"')
-                    lines.append(f'        $s{i} = "{esc}"')
+                    lines.append(f'        $s{i} = "{esc}" ascii wide')
                     continue
             except Exception:
                 pass
@@ -170,3 +178,35 @@ def _make_clean(rule: YaraRule, corpus: list[bytes]) -> YaraRule | None:
 def passes_clean_corpus(rules: list[YaraRule], corpus: list[bytes] | None = None) -> bool:
     corpus = (corpus or []) + CLEAN_CORPUS
     return all(not r.matches(doc) for r in rules for doc in corpus)
+
+
+# Default location for a real goodware corpus. Dropping benign binaries here makes
+# generated rules survive a far harsher false-positive test than the tiny bundled
+# snippets — the difference between rules that look clean and rules deployable in
+# production. Kept out of git (see the directory's README); loaded when present.
+_DEFAULT_CORPUS_DIR = Path(__file__).resolve().parents[2] / "docker" / "clean_corpus"
+_MAX_CORPUS_FILES = 500
+_MAX_CORPUS_FILE_BYTES = 8 * 1024 * 1024
+
+
+def load_clean_corpus(directory: str | Path | None = None) -> list[bytes]:
+    """Load real benign samples from ``docker/clean_corpus/`` (or ``directory``).
+
+    Each file is read up to a byte cap so a big goodware binary can't blow up
+    memory; a rule only needs to see its candidate strings, which cluster in the
+    header/resources. Missing directory ⇒ empty list (bundled snippets still apply).
+    """
+    root = Path(directory) if directory else _DEFAULT_CORPUS_DIR
+    if not root.exists():
+        return []
+    corpus: list[bytes] = []
+    for f in sorted(root.rglob("*")):
+        if not f.is_file() or f.name.startswith(".") or f.name.lower() in {"readme.md", "readme"}:
+            continue
+        try:
+            corpus.append(f.read_bytes()[:_MAX_CORPUS_FILE_BYTES])
+        except OSError:
+            continue
+        if len(corpus) >= _MAX_CORPUS_FILES:
+            break
+    return corpus

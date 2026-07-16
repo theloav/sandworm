@@ -15,7 +15,7 @@ from pathlib import Path
 from ..analyzers.base import Context
 from ..analyzers.registry import REGISTRY, register_builtins
 from ..detect.sigma_gen import SigmaRule, generate_sigma
-from ..detect.yara_gen import YaraRule, generate_yara
+from ..detect.yara_gen import YaraRule, generate_yara, load_clean_corpus
 from ..reconstruct.attack_map import AttackMapping, map_evidence
 from ..reconstruct.graph import add_detections_to_graph, build_graph, graph_summary
 from ..reconstruct.narrative import Phase, build_narrative
@@ -141,6 +141,11 @@ def _ingest_recorded_reports(
     return ran
 
 
+def _cache_path(config: Config, sample: Sample) -> Path:
+    """Content-addressed cache file for a sample's static evidence."""
+    return config.cache_dir / f"{sample.sha256}.jsonl"
+
+
 def analyze_sample(
     sample: Sample,
     *,
@@ -150,6 +155,7 @@ def analyze_sample(
     cape_report: str | None = None,
     memory_report: str | None = None,
     on_evidence=None,
+    use_cache: bool = True,
 ) -> RunResult:
     config = config or get_config()
     run_id = run_id or uuid.uuid4().hex[:12]
@@ -183,29 +189,71 @@ def analyze_sample(
 
     ctx = Context(run_id=run_id, config=config, audit=audit, isolated=isolated)
 
-    # --- Dispatch analyzers ---
-    tags = analyzer_tags_for(triage.fmt) | {"*"}
-    selected: list = []
-    seen = set()
-    for tag in tags:
-        for a in REGISTRY.for_format(tag, include_dynamic=enable_dynamic, isolated=isolated):
-            if a.name not in seen:
-                seen.add(a.name)
-                selected.append(a)
-
     analyzers_run: list[str] = []
-    for analyzer in selected:
-        items = analyzer.analyze(sample, ctx)
-        store.extend(items)
-        analyzers_run.append(analyzer.name)
 
-    # --- Recorded dynamic/memory replay (offline-safe; not a live detonation) ---
-    analyzers_run.extend(
-        _ingest_recorded_reports(
-            cape_report=cape_report, memory_report=memory_report, ctx=ctx, sample=sample,
-            store=store, notes=notes, audit=audit, run_id=run_id,
+    # --- Static-evidence cache (content-addressed by sha256) ---
+    # A pure static, offline run is a deterministic function of the sample bytes,
+    # so re-analysing the same file can reload persisted evidence instead of
+    # re-running every analyzer. Only the static path is cacheable: a live
+    # detonation is non-deterministic, and a recorded-report replay depends on
+    # external files, so both bypass the cache.
+    cacheable = not isolated and cape_report is None and memory_report is None
+    cache_path = _cache_path(config, sample)
+    cache_hit = use_cache and cacheable and cache_path.exists()
+
+    if cache_hit:
+        try:
+            for item in EvidenceStore.load(str(cache_path)):
+                store.append(item)  # append fires the stream subscriber, if any
+            analyzers_run.append("<cache>")
+            notes.append(f"loaded static evidence from cache ({len(store)} items; re-analysis skipped)")
+            audit.log(run_id=run_id, action="cache_hit", sample_hash=sample.sha256, evidence=len(store))
+        except Exception:
+            cache_hit = False  # corrupt cache — fall through to a fresh run
+
+    if not cache_hit:
+        # --- Dispatch analyzers ---
+        tags = analyzer_tags_for(triage.fmt) | {"*"}
+        selected: list = []
+        seen = set()
+        for tag in tags:
+            for a in REGISTRY.for_format(tag, include_dynamic=enable_dynamic, isolated=isolated):
+                if a.name not in seen:
+                    seen.add(a.name)
+                    selected.append(a)
+
+        # Analyzers are independent by contract (they only read the sample +
+        # Context and return EvidenceItems), so run them concurrently. The store
+        # append is already thread-safe. This collapses wall time to the slowest
+        # analyzer — which matters most when capa/pefile subprocesses are in the
+        # mix. Results are appended in a stable analyzer order so evidence ids
+        # stay deterministic.
+        if len(selected) > 1:
+            from concurrent.futures import ThreadPoolExecutor
+
+            with ThreadPoolExecutor(max_workers=min(8, len(selected))) as pool:
+                results = list(pool.map(lambda a: (a.name, a.analyze(sample, ctx)), selected))
+        else:
+            results = [(a.name, a.analyze(sample, ctx)) for a in selected]
+        for name, items in results:
+            store.extend(items)
+            analyzers_run.append(name)
+
+        # Persist the static evidence for future cache hits (before dynamic
+        # replay, so the cached store is the pure-static, deterministic subset).
+        if cacheable:
+            try:
+                store.dump(str(cache_path))
+            except Exception:
+                pass
+
+        # --- Recorded dynamic/memory replay (offline-safe; not a live detonation) ---
+        analyzers_run.extend(
+            _ingest_recorded_reports(
+                cape_report=cape_report, memory_report=memory_report, ctx=ctx, sample=sample,
+                store=store, notes=notes, audit=audit, run_id=run_id,
+            )
         )
-    )
 
     # --- Reconstruction ---
     mappings = map_evidence(store)
@@ -214,7 +262,10 @@ def analyze_sample(
     graph = build_graph(store, mappings, sample_name=sample.name)
 
     # --- Detections ---
-    yara = generate_yara(store, sample)
+    # Test generated YARA against any real goodware in docker/clean_corpus/ (in
+    # addition to the bundled snippets) so rules that would false-positive on
+    # benign binaries are pruned before they ever ship.
+    yara = generate_yara(store, sample, clean_corpus=load_clean_corpus())
     sigma = generate_sigma(store, mappings)
     coverage = compute_coverage(mappings, sigma, yara)
 

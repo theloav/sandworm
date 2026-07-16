@@ -41,6 +41,10 @@ TECHNIQUE_INFO: dict[str, tuple[str, str]] = {
     "T1056.001": ("Input Capture: Keylogging", "collection"),
     "T1057": ("Process Discovery", "discovery"),
     "T1059": ("Command and Scripting Interpreter", "execution"),
+    "T1059.005": ("Command and Scripting Interpreter: Visual Basic", "execution"),
+    "T1059.007": ("Command and Scripting Interpreter: JavaScript", "execution"),
+    "T1027.001": ("Obfuscated Files or Information: Binary Padding/Embedded", "defense-evasion"),
+    "T1204.002": ("User Execution: Malicious File", "execution"),
     "T1071": ("Application Layer Protocol", "command-and-control"),
     "T1071.001": ("Application Layer Protocol: Web Protocols", "command-and-control"),
     "T1082": ("System Information Discovery", "discovery"),
@@ -120,8 +124,15 @@ def _rules() -> list[_Rule]:
         _Rule(
             "T1059", "Command and Scripting Interpreter", "execution", 0.9,
             lambda it: it.artifact in {"api_call", "process", "macro"}
-            and (has_sink("system", "exec", "shell_exec", "passthru", "proc_open", "popen", "eval", "assert", "shell", "invoke-expression")(it)),
+            and (has_sink("system", "exec", "shell_exec", "passthru", "proc_open", "popen", "eval", "assert", "shell", "invoke-expression",
+                          "wscript_shell", "shell_run", "shell_application", "powershell_spawn", "function_ctor")(it)),
             "observed execution sink: {detail}",
+        ),
+        _Rule(
+            "T1059.005", "Visual Basic", "execution", 0.8,
+            lambda it: ("vbscript" in it.source or "hta" in it.source)
+            and it.object.get("sink") in {"wscript_shell", "shell_run", "shell_application", "eval", "adodb_stream_write"},
+            "VBScript/HTA execution behaviour: {detail}",
         ),
         _Rule(
             "T1059.004", "Unix Shell", "execution", 0.85,

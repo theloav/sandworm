@@ -94,6 +94,10 @@ class EvidenceStore:
         self._order: list[str] = []
         self._lock = threading.Lock()
         self._subscribers: list = []
+        # Secondary index on (artifact, operation). map_evidence and query() are
+        # otherwise O(items × rules); a real CAPE trace has thousands of events,
+        # so consumers that know the facet they want skip the full scan.
+        self._by_facet: dict[tuple[str, str], list[str]] = {}
 
     def subscribe(self, callback) -> None:
         """Register ``callback(item)`` to fire once per newly-appended item.
@@ -112,10 +116,18 @@ class EvidenceStore:
             if is_new:
                 self._items[iid] = item
                 self._order.append(iid)
+                self._by_facet.setdefault((item.artifact, item.operation), []).append(iid)
         if is_new and self._subscribers:
             for cb in self._subscribers:
                 cb(item)
         return iid
+
+    def by_facet(self, artifact: str, operation: str) -> list[EvidenceItem]:
+        """O(k) lookup of items with a given (artifact, operation), in insertion
+        order. Returns a fresh list, safe to iterate without holding the lock."""
+        with self._lock:
+            ids = list(self._by_facet.get((artifact, operation), ()))
+        return [self._items[i] for i in ids]
 
     def extend(self, items: Iterable[EvidenceItem]) -> list[str]:
         return [self.append(i) for i in items]
@@ -144,8 +156,15 @@ class EvidenceStore:
     ) -> list[EvidenceItem]:
         """Filter by any combination of facets. ``subject_match`` is a subset
         match against the subject dict."""
+        # Use the (artifact, operation) index when both are pinned — turns a full
+        # scan into a k-item probe.
+        candidates: Iterable[EvidenceItem]
+        if artifact is not None and operation is not None:
+            candidates = self.by_facet(artifact, operation)
+        else:
+            candidates = self
         out: list[EvidenceItem] = []
-        for it in self:
+        for it in candidates:
             if source is not None and it.source != source:
                 continue
             if artifact is not None and it.artifact != artifact:

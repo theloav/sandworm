@@ -18,7 +18,7 @@ from .analyzers.registry import REGISTRY, register_builtins
 from .core.config import get_config
 from .core.evidence import EvidenceStore
 from .core.pipeline import analyze_sample, build_report_inputs, persist_run
-from .core.sample import Sample, SampleStore
+from .core.sample import Sample, SampleStore, SampleTooLargeError
 from .reconstruct.attack_map import map_evidence
 from .reconstruct.graph import build_graph
 
@@ -34,6 +34,10 @@ def analyze(
     memory_report: str = typer.Option("", "--memory-report", help="Ingest a recorded volatility3 JSON report (offline replay)."),
     store_sample: bool = typer.Option(False, "--store", help="Defang+store the sample encrypted-at-rest."),
     stream: bool = typer.Option(False, "--stream", help="Stream evidence live (ALERT on high-signal findings) as it is discovered."),
+    no_cache: bool = typer.Option(False, "--no-cache", help="Ignore the static-evidence cache and re-run all analyzers."),
+    navigator: str = typer.Option("", "--navigator", help="Write an ATT&CK Navigator layer JSON to this path."),
+    stix: str = typer.Option("", "--stix", help="Write a STIX 2.1 bundle of IOCs + techniques to this path."),
+    json_out: str = typer.Option("", "--json", help="Write a compact machine-readable findings JSON to this path."),
 ):
     """Analyze a sample end-to-end and write an HTML report."""
     cfg = get_config()
@@ -45,7 +49,11 @@ def analyze(
         if val and not Path(val).exists():
             typer.secho(f"{label} not found: {val}", fg=typer.colors.RED)
             raise typer.Exit(1)
-    sample = Sample.from_path(p)
+    try:
+        sample = Sample.from_path(p, cfg)
+    except SampleTooLargeError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED)
+        raise typer.Exit(1) from exc
     if store_sample:
         SampleStore(cfg).store(sample)
 
@@ -60,7 +68,7 @@ def analyze(
     result = analyze_sample(
         sample, config=cfg, enable_dynamic=not no_dynamic,
         cape_report=cape_report or None, memory_report=memory_report or None,
-        on_evidence=feed,
+        on_evidence=feed, use_cache=not no_cache,
     )
     if feed is not None:
         typer.secho(f"── feed complete: {len(feed.lines)} events, {feed.alerts} alert(s) ──\n", fg=typer.colors.CYAN)
@@ -94,11 +102,103 @@ def analyze(
         f"  runtime={'N/A' if cov.runtime_coverage is None else f'{cov.runtime_coverage*100:.0f}%'}"
     )
 
+    # --- Machine-readable exports for defender tooling ---
+    if navigator or stix or json_out:
+        from .reporting.export import dumps, findings_json, navigator_layer, stix_bundle
+
+        if navigator:
+            layer = navigator_layer(result.mappings, name=sample.name, sha256=sample.sha256)
+            Path(navigator).write_text(dumps(layer))
+            typer.secho(f"navigator layer → {navigator}", fg=typer.colors.GREEN)
+        if stix:
+            bundle = stix_bundle(result.store, result.mappings, sha256=sample.sha256, name=sample.name)
+            Path(stix).write_text(dumps(bundle))
+            typer.secho(f"STIX 2.1 bundle → {stix} ({len(bundle['objects'])} objects)", fg=typer.colors.GREEN)
+        if json_out:
+            Path(json_out).write_text(dumps(findings_json(result, summary)))
+            typer.secho(f"findings JSON → {json_out}", fg=typer.colors.GREEN)
+
     out_path = Path(out) if out else run_dir / "report.html"
     from .reporting.report import write_report
 
     write_report(build_report_inputs(result), out_path)
     typer.secho(f"report → {out_path}", fg=typer.colors.GREEN)
+
+
+# Risk ordering for batch gating + exit codes.
+_RISK_ORDER = {"Clean": 0, "Low": 1, "Medium": 2, "High": 3, "Critical": 4}
+
+
+@app.command()
+def batch(
+    path: str = typer.Argument(..., help="Directory (or single file) of samples to analyze."),
+    fmt: str = typer.Option("json", "--format", "-f", help="Aggregate output format: json | sarif."),
+    out: str = typer.Option("", "--out", "-o", help="Write aggregate output here (default: stdout)."),
+    fail_on: str = typer.Option("", "--fail-on", help="Exit non-zero if any sample's risk >= this (Low/Medium/High/Critical)."),
+    recursive: bool = typer.Option(False, "--recursive", "-r", help="Recurse into subdirectories."),
+    no_dynamic: bool = typer.Option(True, "--no-dynamic/--dynamic", help="Static-only (default) for batch throughput."),
+):
+    """Analyze many samples and emit one machine-readable report (JSON or SARIF).
+
+    Designed to be wired into a pipeline: point it at a quarantine/artifact
+    directory, get structured findings, and gate the pipeline with ``--fail-on``.
+    """
+    from .reporting.export import dumps, findings_json, sarif_log
+    from .reporting.summary import build_summary
+
+    cfg = get_config()
+    p = Path(path)
+    if p.is_file():
+        paths = [p]
+    elif p.is_dir():
+        glob = p.rglob("*") if recursive else p.glob("*")
+        paths = sorted(f for f in glob if f.is_file())
+    else:
+        typer.secho(f"path not found: {path}", fg=typer.colors.RED)
+        raise typer.Exit(2)
+    if not paths:
+        typer.secho("no samples found", fg=typer.colors.YELLOW)
+        raise typer.Exit(2)
+
+    entries = []
+    worst = 0
+    rows = []
+    for f in paths:
+        try:
+            sample = Sample.from_path(f, cfg)
+        except SampleTooLargeError as exc:
+            typer.secho(f"  skip {f.name}: {exc}", fg=typer.colors.YELLOW)
+            continue
+        result = analyze_sample(sample, config=cfg, enable_dynamic=not no_dynamic)
+        summary = build_summary(result.store, result.mappings, result.phases, isolated=result.isolated)
+        entries.append((result, summary))
+        worst = max(worst, _RISK_ORDER.get(summary.risk, 0))
+        rows.append((f.name, result.triage.fmt, summary.risk, summary.maliciousness_score, len(result.mappings)))
+
+    if fmt == "sarif":
+        payload = dumps(sarif_log(entries))
+    else:
+        payload = dumps({"samples": [findings_json(r, s) for r, s in entries]})
+
+    if out:
+        Path(out).write_text(payload)
+        typer.secho(f"wrote {fmt} for {len(entries)} sample(s) → {out}", fg=typer.colors.GREEN)
+    else:
+        typer.echo(payload)
+
+    # Human-readable summary table to stderr so stdout stays pure machine output.
+    for name, ffmt, risk, score, ntech in rows:
+        color = typer.colors.RED if _RISK_ORDER.get(risk, 0) >= 3 else typer.colors.YELLOW if _RISK_ORDER.get(risk, 0) == 2 else typer.colors.GREEN
+        typer.secho(f"  {risk:<8} {score:>3}/100  {ffmt:<10} {ntech:>2} tech  {name}", fg=color, err=True)
+
+    if fail_on:
+        gate = _RISK_ORDER.get(fail_on.capitalize())
+        if gate is None:
+            typer.secho(f"invalid --fail-on '{fail_on}'", fg=typer.colors.RED, err=True)
+            raise typer.Exit(2)
+        if worst >= gate:
+            typer.secho(f"gate: a sample met/exceeded risk '{fail_on}' → exit 1", fg=typer.colors.RED, err=True)
+            raise typer.Exit(1)
 
 
 @app.command()
@@ -204,7 +304,12 @@ def lineage(
         return
     for n in neighbours:
         d = diff(target, n.signature)  # type: ignore[arg-type]
-        typer.secho(f"  {n.similarity*100:.0f}% · {n.signature.name} ({n.signature.sha256[:12]})", fg=typer.colors.CYAN)
+        typer.secho(
+            f"  behaviour {n.similarity*100:.0f}% · bytes {n.byte_similarity*100:.0f}%"
+            f"{' · same imphash' if n.same_imphash else ''}  [{n.relation}]"
+            f"  {n.signature.name} ({n.signature.sha256[:12]})",
+            fg=typer.colors.CYAN,
+        )
         typer.echo(f"      shared:    {', '.join(d.shared) or '—'}")
         typer.echo(f"      evolution: {d.evolution_note(target, n.signature)}")  # type: ignore[arg-type]
 

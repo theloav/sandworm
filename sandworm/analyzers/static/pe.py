@@ -10,13 +10,20 @@ from __future__ import annotations
 
 import json
 import shutil
+import struct
 import subprocess
 import tempfile
+from datetime import UTC, datetime
 
 from ...core.evidence import EvidenceItem
 from ...core.sample import Sample
+from ...core.simhash import imphash
 from ..base import BaseAnalyzer, Context
 from .common import shannon_entropy
+
+# Section characteristics flags (IMAGE_SCN_*).
+_SCN_MEM_EXECUTE = 0x2000_0000
+_SCN_MEM_WRITE = 0x8000_0000
 
 # Imports mapped to ATT&CK. Used to emit capability hints even without capa.
 # (Confidence is deliberately modest — a single import is a capability, not proof.)
@@ -76,6 +83,66 @@ def _parse_with_pefile(data: bytes):  # pragma: no cover - optional dep
     return pefile.PE(data=data, fast_load=False)
 
 
+def parse_pe_headers(data: bytes) -> dict | None:
+    """Dependency-free parse of the COFF header + section table.
+
+    Returns ``{"timestamp", "machine", "sections": [{name, vsize, raw_size,
+    raw_ptr, characteristics, entropy}], "overlay_offset", "overlay_size"}`` or
+    ``None`` when there is no valid ``PE\\0\\0`` signature. This keeps section
+    entropy, W+X flags and overlay detection working even without `pefile`.
+    """
+    if len(data) < 0x40 or data[:2] != b"MZ":
+        return None
+    e_lfanew = struct.unpack_from("<I", data, 0x3C)[0]
+    if e_lfanew <= 0 or e_lfanew + 24 > len(data) or data[e_lfanew:e_lfanew + 4] != b"PE\x00\x00":
+        return None
+    machine, nsections, timestamp, _, _, opt_size, _chars = struct.unpack_from("<HHIIIHH", data, e_lfanew + 4)
+    opt_off = e_lfanew + 24
+    sec_off = opt_off + opt_size
+
+    # .NET / CLR: the COM Descriptor (CLR runtime header) is data directory #14.
+    # Its offset in the optional header depends on PE32 vs PE32+ magic.
+    dotnet = False
+    if opt_off + 2 <= len(data):
+        magic = struct.unpack_from("<H", data, opt_off)[0]
+        dir_base = opt_off + (0x60 if magic == 0x10B else 0x70)  # PE32 vs PE32+
+        clr_off = dir_base + 14 * 8
+        if clr_off + 8 <= len(data):
+            clr_rva, clr_size = struct.unpack_from("<II", data, clr_off)
+            dotnet = clr_rva != 0 and clr_size != 0
+    sections: list[dict] = []
+    end_of_image = 0
+    for i in range(min(nsections, 96)):  # 96 = generous sanity cap
+        off = sec_off + i * 40
+        if off + 40 > len(data):
+            break
+        name = data[off:off + 8].rstrip(b"\x00").decode("latin-1", "replace")
+        vsize, _vaddr, raw_size, raw_ptr = struct.unpack_from("<IIII", data, off + 8)
+        characteristics = struct.unpack_from("<I", data, off + 36)[0]
+        raw = data[raw_ptr:raw_ptr + raw_size] if 0 < raw_ptr < len(data) else b""
+        sections.append(
+            {
+                "name": name,
+                "vsize": vsize,
+                "raw_size": raw_size,
+                "raw_ptr": raw_ptr,
+                "characteristics": characteristics,
+                "entropy": round(shannon_entropy(raw), 3),
+            }
+        )
+        end_of_image = max(end_of_image, raw_ptr + raw_size)
+    overlay_size = len(data) - end_of_image if 0 < end_of_image < len(data) else 0
+    return {
+        "machine": machine,
+        "timestamp": timestamp,
+        "sections": sections,
+        "dotnet": dotnet,
+        "overlay_offset": end_of_image if overlay_size else 0,
+        "overlay_size": overlay_size,
+        "overlay_entropy": round(shannon_entropy(data[end_of_image:]), 3) if overlay_size else 0.0,
+    }
+
+
 class PeAnalyzer(BaseAnalyzer):
     name = "static.pe"
     handles = {"pe"}
@@ -85,14 +152,17 @@ class PeAnalyzer(BaseAnalyzer):
         ref = f"sample:{sample.sha256}"
         items: list[EvidenceItem] = []
         imports: list[str] = []
-        sections_info: list[dict] = []
+
+        # Structure comes from the dependency-free header parser — sections,
+        # timestamps, W+X flags and overlay work with zero optional deps.
+        headers = parse_pe_headers(sample.data)
+        sections_info = [
+            {"name": s["name"], "entropy": s["entropy"], "vsize": s["vsize"]}
+            for s in (headers["sections"] if headers else [])
+        ]
 
         try:  # pragma: no cover - optional dep path
             pe = _parse_with_pefile(sample.data)
-            for section in pe.sections:
-                name = section.Name.rstrip(b"\x00").decode("latin-1", "replace")
-                ent = shannon_entropy(section.get_data())
-                sections_info.append({"name": name, "entropy": round(ent, 3), "vsize": section.Misc_VirtualSize})
             if hasattr(pe, "DIRECTORY_ENTRY_IMPORT"):
                 for entry in pe.DIRECTORY_ENTRY_IMPORT:
                     for imp in entry.imports:
@@ -117,6 +187,37 @@ class PeAnalyzer(BaseAnalyzer):
                 evidence_refs=[ref],
             )
         )
+        # imphash — same import profile ⇒ same imphash across recompiles/repacks.
+        ih = imphash(imports)
+        if ih:
+            items.append(
+                ctx.ev(
+                    source="static.pe",
+                    artifact="module",
+                    operation="read",
+                    subject={"analyzer": self.name},
+                    object={"imphash": ih},
+                    details={"note": "PE import hash — corpus/lineage pivot for shared import profile"},
+                    confidence=0.6,
+                    evidence_refs=[ref],
+                )
+            )
+        if headers:
+            items.extend(self._header_findings(headers, ctx, ref))
+            if headers.get("dotnet"):
+                items.append(
+                    ctx.ev(
+                        source="static.pe",
+                        artifact="module",
+                        operation="read",
+                        subject={"analyzer": self.name},
+                        object={"runtime": ".NET/CLR"},
+                        details={"note": "managed .NET assembly (CLR header present) — decompile with "
+                                         "ILSpy/dnSpy; watch for reflection-based loading"},
+                        confidence=0.7,
+                        evidence_refs=[ref],
+                    )
+                )
         for sec in sections_info:
             if sec["entropy"] > 7.2:
                 items.append(
@@ -149,6 +250,80 @@ class PeAnalyzer(BaseAnalyzer):
                 )
 
         items.extend(self._run_capa(sample, ctx, ref))
+        return items
+
+    def _header_findings(self, headers: dict, ctx: Context, ref: str) -> list[EvidenceItem]:
+        """Structural anomalies from the header parse: W+X sections, compile
+        timestamp forgery, and an appended overlay (embedded payload)."""
+        items: list[EvidenceItem] = []
+
+        for s in headers["sections"]:
+            chars = s["characteristics"]
+            if chars & _SCN_MEM_EXECUTE and chars & _SCN_MEM_WRITE:
+                items.append(
+                    ctx.ev(
+                        source="static.pe",
+                        artifact="module",
+                        operation="read",
+                        subject={"analyzer": self.name},
+                        object={"section": s["name"] or "<unnamed>"},
+                        details={
+                            "characteristics": hex(chars),
+                            "attack_hint": "T1027",
+                            "why": "writable+executable section — self-modifying/unpacking code "
+                                   "(benign compilers never emit W+X sections)",
+                        },
+                        confidence=0.7,
+                        evidence_refs=[ref],
+                    )
+                )
+
+        ts = headers["timestamp"]
+        now = int(datetime.now(UTC).timestamp())
+        if ts == 0 or ts > now + 86400:
+            when = "zeroed" if ts == 0 else f"in the future ({datetime.fromtimestamp(ts, UTC).date()})"
+            items.append(
+                ctx.ev(
+                    source="static.pe",
+                    artifact="module",
+                    operation="read",
+                    subject={"analyzer": self.name},
+                    object={"anomaly": "compile_timestamp"},
+                    details={
+                        "timestamp": ts,
+                        "note": f"PE compile timestamp is {when} — commonly forged to hinder "
+                                "campaign timeline attribution",
+                    },
+                    confidence=0.5,
+                    evidence_refs=[ref],
+                )
+            )
+
+        if headers["overlay_size"] >= 512:
+            overlay = headers["overlay_size"]
+            ent = headers.get("overlay_entropy", 0.0)
+            # An Authenticode signature also lives in the overlay; a large
+            # high-entropy overlay is the dropper-payload signal.
+            high = ent > 7.2
+            items.append(
+                ctx.ev(
+                    source="static.pe",
+                    artifact="file",
+                    operation="read",
+                    subject={"analyzer": self.name},
+                    object={"anomaly": "overlay", "size": overlay},
+                    details={
+                        "offset": headers["overlay_offset"],
+                        "entropy": ent,
+                        "attack_hint": "T1027" if high else None,
+                        "note": f"{overlay} bytes appended after the PE image"
+                                + (" at high entropy — likely an embedded encrypted payload/config"
+                                   if high else " — overlay data (payload, config, or signature)"),
+                    },
+                    confidence=0.7 if high else 0.45,
+                    evidence_refs=[ref],
+                )
+            )
         return items
 
     def _run_capa(self, sample: Sample, ctx: Context, ref: str) -> list[EvidenceItem]:

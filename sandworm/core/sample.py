@@ -20,6 +20,10 @@ from pathlib import Path
 from .config import Config, get_config
 
 
+class SampleTooLargeError(ValueError):
+    """Raised when a sample exceeds ``Config.max_sample_bytes``."""
+
+
 def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
@@ -46,8 +50,16 @@ class Sample:
         )
 
     @classmethod
-    def from_path(cls, path: str | Path) -> Sample:
+    def from_path(cls, path: str | Path, config: Config | None = None) -> Sample:
         p = Path(path)
+        cap = (config or get_config()).max_sample_bytes
+        if cap:
+            size = p.stat().st_size
+            if size > cap:
+                raise SampleTooLargeError(
+                    f"{p.name} is {size:,} bytes, over the {cap:,}-byte sample cap "
+                    "(set SANDWORM_MAX_SAMPLE_BYTES=0 to disable, or raise the limit)."
+                )
         data = p.read_bytes()
         s = cls.from_bytes(p.name, data)
         s.origin_path = str(p)

@@ -19,6 +19,8 @@ matching the rule that deeper, less-certain layers should weigh less.
 
 from __future__ import annotations
 
+import re
+
 from ...core.evidence import EvidenceItem
 from ...core.sample import Sample
 from ..base import BaseAnalyzer, Context
@@ -44,6 +46,12 @@ _PACKER_SIGS: list[tuple[str, tuple[bytes, ...]]] = [
 _ENTROPY_PACKED = 7.2   # max-block entropy above which a region looks packed/encrypted
 _BLOCK = 4096
 
+# One alternation regex over every packer signature (with a reverse map back to
+# the label) turns ~30 full-file passes into a single scan that stops at the
+# first hit.
+_SIG_TO_LABEL: dict[bytes, str] = {sig: label for label, sigs in _PACKER_SIGS for sig in sigs}
+_PACKER_RE = re.compile(b"|".join(re.escape(sig) for sig in sorted(_SIG_TO_LABEL, key=len, reverse=True)))
+
 
 def _max_block_entropy(data: bytes) -> float:
     if len(data) <= _BLOCK:
@@ -54,10 +62,10 @@ def _max_block_entropy(data: bytes) -> float:
 def _detect_packer(data: bytes) -> tuple[str, float]:
     """Return (packer_label, detection_confidence). Signature match is near-certain;
     a high-entropy body with no signature is a lower-confidence 'unknown packer'."""
-    for label, sigs in _PACKER_SIGS:
-        if any(sig in data for sig in sigs):
-            return label, 0.95
-    if _max_block_entropy(data) >= _ENTROPY_PACKED and len(data) > _BLOCK:
+    m = _PACKER_RE.search(data)
+    if m:
+        return _SIG_TO_LABEL[m.group()], 0.95
+    if len(data) > _BLOCK and _max_block_entropy(data) >= _ENTROPY_PACKED:
         return "unknown (high-entropy / custom packer)", 0.65
     return "", 0.0
 
