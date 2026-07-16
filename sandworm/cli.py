@@ -37,6 +37,9 @@ def analyze(
     no_cache: bool = typer.Option(False, "--no-cache", help="Ignore the static-evidence cache and re-run all analyzers."),
     navigator: str = typer.Option("", "--navigator", help="Write an ATT&CK Navigator layer JSON to this path."),
     stix: str = typer.Option("", "--stix", help="Write a STIX 2.1 bundle of IOCs + techniques to this path."),
+    misp: str = typer.Option("", "--misp", help="Write a MISP event JSON (IOC attributes + ATT&CK tags) to this path."),
+    openioc: str = typer.Option("", "--openioc", help="Write an OpenIOC 1.1 XML indicator file to this path."),
+    csv_out: str = typer.Option("", "--csv", help="Write a flat CSV of IOCs to this path."),
     json_out: str = typer.Option("", "--json", help="Write a compact machine-readable findings JSON to this path."),
 ):
     """Analyze a sample end-to-end and write an HTML report."""
@@ -103,8 +106,16 @@ def analyze(
     )
 
     # --- Machine-readable exports for defender tooling ---
-    if navigator or stix or json_out:
-        from .reporting.export import dumps, findings_json, navigator_layer, stix_bundle
+    if navigator or stix or misp or openioc or csv_out or json_out:
+        from .reporting.export import (
+            dumps,
+            findings_json,
+            ioc_csv,
+            misp_event,
+            navigator_layer,
+            openioc_xml,
+            stix_bundle,
+        )
 
         if navigator:
             layer = navigator_layer(result.mappings, name=sample.name, sha256=sample.sha256)
@@ -114,6 +125,16 @@ def analyze(
             bundle = stix_bundle(result.store, result.mappings, sha256=sample.sha256, name=sample.name)
             Path(stix).write_text(dumps(bundle))
             typer.secho(f"STIX 2.1 bundle → {stix} ({len(bundle['objects'])} objects)", fg=typer.colors.GREEN)
+        if misp:
+            event = misp_event(result.store, result.mappings, sha256=sample.sha256, name=sample.name)
+            Path(misp).write_text(dumps(event))
+            typer.secho(f"MISP event → {misp} ({len(event['Event']['Attribute'])} attributes)", fg=typer.colors.GREEN)
+        if openioc:
+            Path(openioc).write_text(openioc_xml(result.store, sha256=sample.sha256, name=sample.name))
+            typer.secho(f"OpenIOC → {openioc}", fg=typer.colors.GREEN)
+        if csv_out:
+            Path(csv_out).write_text(ioc_csv(result.store, sha256=sample.sha256, name=sample.name))
+            typer.secho(f"IOC CSV → {csv_out}", fg=typer.colors.GREEN)
         if json_out:
             Path(json_out).write_text(dumps(findings_json(result, summary)))
             typer.secho(f"findings JSON → {json_out}", fg=typer.colors.GREEN)

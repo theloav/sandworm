@@ -4,7 +4,14 @@ from __future__ import annotations
 
 from sandworm.core.evidence import EvidenceItem, EvidenceStore
 from sandworm.reconstruct.attack_map import AttackMapping
-from sandworm.reporting.export import navigator_layer, sarif_log, stix_bundle
+from sandworm.reporting.export import (
+    ioc_csv,
+    misp_event,
+    navigator_layer,
+    openioc_xml,
+    sarif_log,
+    stix_bundle,
+)
 
 
 def _mapping(tid="T1059", name="Command and Scripting Interpreter", tactic="execution", conf=0.9):
@@ -68,6 +75,79 @@ def test_confidence_carried_to_stix():
     bundle = stix_bundle(_ioc_store(), [_mapping(conf=0.85)], sha256="d", name="x")
     rel = next(o for o in bundle["objects"] if o["type"] == "relationship")
     assert rel["confidence"] == 85
+
+
+# --- MISP / OpenIOC / CSV ---
+
+
+def test_misp_event_attributes_and_tags():
+    event = misp_event(_ioc_store(), [_mapping()], sha256="deadbeef", name="x.exe")["Event"]
+    types = {a["type"] for a in event["Attribute"]}
+    assert {"url", "ip-dst", "domain", "sha256"} <= types
+    # ATT&CK technique surfaced as a MISP galaxy tag.
+    assert any("mitre-attack" in t["name"] and "T1059" in t["name"] for t in event["Tag"])
+
+
+def test_misp_to_ids_gated_by_confidence():
+    store = EvidenceStore()
+    store.append(EvidenceItem(
+        run_id="r", source="static.common", artifact="network", operation="resolve",
+        object={"kind": "url", "value": "http://weak.example.top/x"}, details={"ioc": True}, confidence=0.3,
+    ))
+    attrs = misp_event(store, [], sha256="d", name="x")["Event"]["Attribute"]
+    url_attr = next(a for a in attrs if a["type"] == "url")
+    assert url_attr["to_ids"] is False  # low-confidence IOC is not detection-eligible
+
+
+def test_openioc_is_valid_xml_with_indicators(tmp_path):
+    import xml.etree.ElementTree as ET
+
+    xml = openioc_xml(_ioc_store(), sha256="deadbeef", name="x.exe")
+    # Round-trip through a written UTF-8 file so an encoding-declaration mismatch
+    # (e.g. the "·" in the description) is caught the way a consumer would hit it.
+    p = tmp_path / "ioc.xml"
+    p.write_text(xml)
+    root = ET.parse(p).getroot()
+    ns = "{http://schemas.mandiant.com/2010/ioc}"
+    items = root.findall(f".//{ns}IndicatorItem")
+    assert len(items) == 3
+    contents = {i.find(f"{ns}Content").text for i in items}
+    assert "http://evil.example.ru/x" in contents
+
+
+def test_openioc_escapes_special_chars():
+    import xml.etree.ElementTree as ET
+
+    store = EvidenceStore()
+    store.append(EvidenceItem(
+        run_id="r", source="static.common", artifact="network", operation="resolve",
+        object={"kind": "url", "value": "http://evil.example.ru/a?x=1&y=2"}, details={"ioc": True}, confidence=0.7,
+    ))
+    xml = openioc_xml(store, sha256="d", name="a&b<c>")
+    ET.fromstring(xml)  # ampersand in value + name must not break XML
+
+
+def test_ioc_csv_rows():
+    csv_text = ioc_csv(_ioc_store(), sha256="deadbeef", name="x.exe")
+    lines = csv_text.strip().splitlines()
+    assert lines[0] == "kind,value,confidence,sample,sha256"
+    assert len(lines) == 4  # header + 3 IOCs
+    assert any("203.0.113.9" in ln for ln in lines)
+
+
+def test_ioc_exporters_dedupe():
+    # The same IOC seen by two different analyzers collapses to one row, keeping
+    # the higher confidence (the store dedups identical items; _iter_iocs dedups
+    # across distinct evidence items by (kind, value)).
+    store = EvidenceStore()
+    for source, conf in (("static.common", 0.4), ("static.decode", 0.9)):
+        store.append(EvidenceItem(
+            run_id="r", source=source, artifact="network", operation="resolve",
+            object={"kind": "domain", "value": "dup.example.top"}, details={"ioc": True}, confidence=conf,
+        ))
+    rows = ioc_csv(store, sha256="d", name="x").strip().splitlines()
+    assert len(rows) == 2  # header + one deduped IOC
+    assert "0.900" in rows[1]
 
 
 class _FakeSummary:

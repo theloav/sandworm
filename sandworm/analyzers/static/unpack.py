@@ -101,9 +101,15 @@ class UnpackAnalyzer(BaseAnalyzer):
             evidence_refs=[ref],
         )
 
-        # Layer 1 — the unpacked image. We know it exists; recovering its bytes
-        # needs emulation/dynamic unpack, so it is pending and confidence-decayed.
-        # It links back to layer 0 (parent → child) for the layered graph.
+        # Layer 1 — the unpacked image. Try to actually recover it by emulating
+        # the unpack stub (Unicorn, offline, no OS/APIs). If that surfaces a
+        # self-modifying write (the stub decompressing real code into memory), we
+        # emit a *recovered* layer with the bytes and mine them for indicators.
+        # Otherwise we fall back to the honest "pending — requires emulation" layer.
+        emu_items = self._try_emulation(sample, ctx, ref, layer0.id, det_conf)
+        if emu_items:
+            return [layer0, *emu_items]
+
         layer1 = ctx.ev(
             source="static.unpack",
             artifact="module",
@@ -123,6 +129,96 @@ class UnpackAnalyzer(BaseAnalyzer):
             evidence_refs=[ref, layer0.id],
         )
         return [layer0, layer1]
+
+    def _try_emulation(self, sample: Sample, ctx: Context, ref: str, parent_id: str, det_conf: float):
+        """Emulate the unpack stub; return recovered-layer evidence or []."""
+        from .emulate import emulate_unpack, unicorn_available
+        from .pe import parse_pe_headers
+
+        if not unicorn_available():
+            return []
+        headers = parse_pe_headers(sample.data)
+        if not headers:
+            return []
+        result = emulate_unpack(sample.data, headers)
+        if result is None or not result.self_modifying:
+            return []
+
+        recovered = result.unpacked_bytes
+        preview = recovered[:200].decode("latin-1", "replace")
+        items = [
+            ctx.ev(
+                source="static.unpack.emulated",
+                artifact="module",
+                operation="decode",
+                subject={"analyzer": self.name},
+                object={"layer": 1, "function": "unpacked image (emulated)"},
+                details={
+                    "evidence_type": "unpack_layer",
+                    "parent_layer": 0,
+                    "wrapper": "unpacked",
+                    "status": "recovered_by_emulation",
+                    "decoded_len": len(recovered),
+                    "decoded_preview": preview,
+                    "emulation": {
+                        "instructions": result.instructions,
+                        "exec_writes": result.write_count,
+                    },
+                    "attack_hint": "T1140",
+                    "why": f"recovered the unpacked layer by emulating the stub — it made "
+                           f"{result.write_count} write(s) into executable memory over "
+                           f"{result.instructions} instructions (self-modifying unpacker)",
+                },
+                confidence=round(min(0.9, det_conf * 0.9), 3),
+                evidence_refs=[ref, parent_id],
+            )
+        ]
+        # Mine the recovered bytes for indicators / ransomware, like the decode lane.
+        items.extend(self._indicators_from_recovered(recovered, ctx, ref, items[0].id))
+        return items
+
+    def _indicators_from_recovered(self, recovered: bytes, ctx: Context, ref: str, parent_id: str):
+        from .common import (
+            extract_all_strings,
+            extract_iocs_classified,
+            is_ransomware,
+            ransomware_scan,
+        )
+
+        items = []
+        text = "\n".join(extract_all_strings(recovered))
+        for kind, val, conf, fp, category in extract_iocs_classified(text):
+            if category != "ioc":
+                continue
+            items.append(
+                ctx.ev(
+                    source="static.unpack.emulated",
+                    artifact="network" if kind in {"url", "domain", "ipv4"} else "string",
+                    operation="resolve",
+                    subject={"analyzer": self.name},
+                    object={"kind": kind, "value": val},
+                    details={"ioc": True, "false_positive_risk": fp, "decoded_from": "emulated_unpack",
+                             "why": "indicator recovered from the emulated-unpacked layer"},
+                    confidence=round(min(0.95, conf + 0.2), 3),
+                    evidence_refs=[ref, parent_id],
+                )
+            )
+        _, cats = ransomware_scan(recovered)
+        if is_ransomware(cats):
+            items.append(
+                ctx.ev(
+                    source="static.unpack.emulated",
+                    artifact="file",
+                    operation="write",
+                    subject={"analyzer": self.name},
+                    object={"capability": "ransomware", "indicators": [h for v in cats.values() for h in v][:8]},
+                    details={"decoded_from": "emulated_unpack",
+                             "why": "ransomware indicators recovered from the emulated-unpacked layer"},
+                    confidence=0.85,
+                    evidence_refs=[ref, parent_id],
+                )
+            )
+        return items
 
 
 def register(registry) -> None:

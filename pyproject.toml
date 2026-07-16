@@ -24,6 +24,10 @@ static = ["lief>=0.14", "pefile>=2023.2.7", "pyelftools>=0.30", "capstone>=5.0",
 # section) ~20x on multi-MB samples; the pipeline falls back to pure Python when
 # it is absent.
 perf = ["numpy>=1.24"]
+# AES-256 encryption-at-rest for the sample store, and emulation-assisted
+# unpacking of packed binaries. Both degrade gracefully when absent.
+secure = ["pyzipper>=0.3.6"]
+emulate = ["unicorn>=2.0", "capstone>=5.0"]
 graph = ["neo4j>=5.14"]
 dynamic = []
 memory = ["volatility3>=2.5"]

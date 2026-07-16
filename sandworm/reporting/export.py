@@ -1,11 +1,15 @@
 """Machine-readable exports for defender tooling.
 
-Three formats, all built from the same evidence + mappings a run already produced:
+All built from the same evidence + mappings a run already produced — the export
+engine is simply another *consumer* of the EvidenceStore, never a new pipeline:
 
-* **ATT&CK Navigator layer** — a JSON layer defenders drop straight into the
-  MITRE Navigator; per-technique confidence becomes the heat score.
-* **STIX 2.1 bundle** — the extracted IOCs and mapped techniques as STIX SDOs
-  (indicator / attack-pattern / relationship), directly ingestible by MISP/TIPs.
+* **ATT&CK Navigator layer** — per-technique confidence as a heat score.
+* **STIX 2.1 bundle** — IOCs + techniques as STIX SDOs (indicator / attack-pattern
+  / relationship), ingestible by TIPs.
+* **MISP event** — IOCs as MISP attributes + Galaxy-style ATT&CK tags.
+* **OpenIOC** — Mandiant OpenIOC 1.1 XML indicator tree.
+* **CSV** — a flat indicator dump for spreadsheets / quick grep.
+* **SARIF 2.1** — results for code-scanning dashboards / CI.
 * **Findings JSON** — a compact, stable machine summary for batch/CI use.
 
 Nothing here re-analyses; exporters are pure consumers of the RunResult, matching
@@ -14,10 +18,13 @@ the evidence-layer architecture.
 
 from __future__ import annotations
 
+import csv
 import hashlib
+import io
 import json
 from datetime import UTC, datetime
 from typing import Any
+from xml.sax.saxutils import escape as _xml_escape
 
 # ATT&CK Navigator colour ramp: low → high confidence.
 _NAV_GRADIENT = {"colors": ["#ffe6e6", "#ff9999", "#cc0000"], "minValue": 0.0, "maxValue": 1.0}
@@ -160,6 +167,116 @@ def findings_json(result, summary) -> dict:
                        "detectable": result.coverage.detectable},
         "evidence_count": len(result.store),
     }
+
+
+def _iter_iocs(store) -> list[tuple[str, str, float]]:
+    """Deduplicated (kind, value, confidence) IOCs from the store — the single
+    source every IOC exporter draws from. Highest confidence wins on duplicates."""
+    best: dict[tuple[str, str], float] = {}
+    for it in store:
+        if not it.details.get("ioc"):
+            continue
+        kind, value = it.object.get("kind"), it.object.get("value")
+        if not kind or not value:
+            continue
+        key = (str(kind), str(value))
+        conf = float(it.confidence)
+        if conf > best.get(key, -1.0):
+            best[key] = conf
+    return [(k, v, c) for (k, v), c in best.items()]
+
+
+# IOC kind → (MISP type, MISP category). MISP has precise types per indicator.
+_MISP_TYPE = {
+    "url": ("url", "Network activity"),
+    "domain": ("domain", "Network activity"),
+    "ipv4": ("ip-dst", "Network activity"),
+    "email": ("email-src", "Payload delivery"),
+    "md5": ("md5", "Payload delivery"),
+    "sha256": ("sha256", "Payload delivery"),
+}
+
+# IOC kind → OpenIOC search term (Mandiant IOC terms).
+_OPENIOC_TERM = {
+    "url": "Network/URI",
+    "domain": "Network/DNS",
+    "ipv4": "Network/Connection/IP",
+    "email": "Email/From",
+    "md5": "FileItem/Md5sum",
+    "sha256": "FileItem/Sha256sum",
+}
+
+
+def misp_event(store, mappings: list[Any], *, sha256: str, name: str) -> dict:
+    """A MISP event (core-format JSON) with IOC attributes and ATT&CK Galaxy tags.
+    POST straight to a MISP instance's ``/events/add`` or import via the UI."""
+    now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S")
+    attributes: list[dict] = [{
+        "type": "sha256", "category": "Payload delivery", "to_ids": True,
+        "value": sha256, "comment": f"analysed sample: {name}",
+    }]
+    for kind, value, conf in _iter_iocs(store):
+        mapping = _MISP_TYPE.get(kind)
+        if not mapping:
+            continue
+        misp_type, category = mapping
+        attributes.append({
+            "type": misp_type, "category": category,
+            "to_ids": conf >= 0.5,  # only high-confidence indicators drive detection
+            "value": value, "comment": f"SANDWORM confidence {conf:.2f}",
+        })
+    tags = [{"name": f'misp-galaxy:mitre-attack-pattern="{m.technique_name} - {m.technique_id}"'}
+            for m in mappings]
+    tags.append({"name": "tlp:amber"})
+    return {"Event": {
+        "info": f"SANDWORM · {name}",
+        "date": now[:10], "threat_level_id": "2", "analysis": "2", "distribution": "0",
+        "Attribute": attributes,
+        "Tag": tags,
+    }}
+
+
+def openioc_xml(store, *, sha256: str, name: str) -> str:
+    """Mandiant OpenIOC 1.1 XML. IOCs become IndicatorItems OR'd under one
+    top-level Indicator (any match ⇒ hit), the standard OpenIOC shape."""
+    ioc_id = hashlib.sha256(f"openioc:{sha256}".encode()).hexdigest()
+    items = []
+    for kind, value, _conf in _iter_iocs(store):
+        term = _OPENIOC_TERM.get(kind)
+        if not term:
+            continue
+        context, doc = term.split("/", 1)[0], term
+        items.append(
+            f'      <IndicatorItem condition="contains">\n'
+            f'        <Context document="{context}" search="{doc}" type="mir"/>\n'
+            f'        <Content type="string">{_xml_escape(value)}</Content>\n'
+            f'      </IndicatorItem>'
+        )
+    items_xml = "\n".join(items) if items else "      <!-- no network/file IOCs recovered -->"
+    return (
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        f'<ioc xmlns="http://schemas.mandiant.com/2010/ioc" id="{ioc_id[:8]}-'
+        f'{ioc_id[8:12]}-{ioc_id[12:16]}-{ioc_id[16:20]}-{ioc_id[20:32]}">\n'
+        f'  <short_description>SANDWORM · {_xml_escape(name)}</short_description>\n'
+        f'  <authored_by>SANDWORM</authored_by>\n'
+        '  <links/>\n'
+        '  <definition>\n'
+        '    <Indicator operator="OR" id="' + ioc_id[:8] + '-0000-0000-0000-000000000000">\n'
+        f'{items_xml}\n'
+        '    </Indicator>\n'
+        '  </definition>\n'
+        '</ioc>\n'
+    )
+
+
+def ioc_csv(store, *, sha256: str, name: str) -> str:
+    """Flat CSV indicator dump: kind,value,confidence,sample,sha256."""
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["kind", "value", "confidence", "sample", "sha256"])
+    for kind, value, conf in sorted(_iter_iocs(store)):
+        w.writerow([kind, value, f"{conf:.3f}", name, sha256])
+    return buf.getvalue()
 
 
 _RISK_TO_SARIF_LEVEL = {"Critical": "error", "High": "error", "Medium": "warning", "Low": "note", "Clean": "none"}

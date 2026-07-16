@@ -74,42 +74,72 @@ class Sample:
         return self.data[:n]
 
 
+def _pyzipper():
+    """Return the pyzipper module if installed, else None. pyzipper gives real
+    WinZip AES-256 encryption that the stdlib zipfile cannot *write*."""
+    try:  # pragma: no cover - exercised via SampleStore.encryption
+        import pyzipper  # type: ignore
+
+        return pyzipper
+    except ImportError:
+        return None
+
+
 class SampleStore:
     """Encrypted-at-rest sample storage.
 
-    Uses a password-protected ZIP. NOTE: the stdlib zipfile uses legacy ZipCrypto
-    which is weak; it is used here purely as a *defanging* measure (prevents the
-    raw executable bytes sitting unprotected on a shared path and stops casual/
-    accidental execution and naive AV/EDR detonation), not as strong crypto. For
-    real engagements substitute AES (e.g. pyzipper / 7z) — see docs/handling-real-samples.md.
+    Strong by default when ``pyzipper`` is installed: samples are written to a
+    **AES-256** WinZip archive. Without pyzipper it degrades to a stdlib
+    password-marked ZIP — still a *defang* (non-executable inner name, isolated
+    dir, no raw bytes on a shared path) but not strong crypto. The
+    :attr:`encryption` property reports which mode is active so callers/tests can
+    assert on it. Install with ``pip install '.[secure]'`` for AES.
     """
 
     def __init__(self, config: Config | None = None) -> None:
         self.config = config or get_config()
         self.password = self.config.sample_store_password.encode()
 
+    @property
+    def encryption(self) -> str:
+        """'aes-256' when pyzipper is available, else 'zipcrypto-defang'."""
+        return "aes-256" if _pyzipper() is not None else "zipcrypto-defang"
+
     def _archive_path(self, sha256: str) -> Path:
         return self.config.sample_dir / f"{sha256}.zip"
 
     def store(self, sample: Sample) -> Path:
-        """Defang a sample to disk as a password-protected archive. The inner
-        entry name carries a ``.bin`` suffix so it is never written with an
-        executable extension to a shared path."""
+        """Defang a sample to disk as an encrypted archive. The inner entry name
+        carries a ``.bin`` suffix so it is never written with an executable
+        extension to a shared path. Uses AES-256 when pyzipper is present."""
         path = self._archive_path(sample.sha256)
+        inner = f"{sample.sha256}.bin"
+        pz = _pyzipper()
+        if pz is not None:  # pragma: no cover - requires optional dep
+            with pz.AESZipFile(str(path), "w", compression=pz.ZIP_DEFLATED,
+                               encryption=pz.WZ_AES) as zf:
+                zf.setpassword(self.password)
+                zf.writestr(inner, sample.data)
+            return path
+        # Fallback: stdlib cannot write an encrypted entry; the non-executable
+        # naming and isolated dir are the load-bearing defang here.
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-            zf.writestr(f"{sample.sha256}.bin", sample.data)
+            zf.writestr(inner, sample.data)
         path.write_bytes(buf.getvalue())
-        # NOTE: stdlib zipfile cannot *write* an encrypted entry. We mark the
-        # archive's intent and rely on read-side password enforcement plus the
-        # docs' guidance to use pyzipper for true encryption. The non-executable
-        # naming and isolated dir are the load-bearing defang here.
         return path
 
     def load(self, sha256: str, original_name: str | None = None) -> Sample:
         path = self._archive_path(sha256)
         if not path.exists():
             raise FileNotFoundError(f"No stored sample for {sha256}")
+        pz = _pyzipper()
+        if pz is not None:  # pragma: no cover - requires optional dep
+            with pz.AESZipFile(str(path)) as zf:
+                zf.setpassword(self.password)
+                data = zf.read(zf.namelist()[0])
+            s = Sample.from_bytes(original_name or f"{sha256}.bin", data)
+            return s
         with zipfile.ZipFile(path) as zf:
             inner = zf.namelist()[0]
             try:

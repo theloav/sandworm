@@ -103,9 +103,22 @@ def parse_pe_headers(data: bytes) -> dict | None:
     # .NET / CLR: the COM Descriptor (CLR runtime header) is data directory #14.
     # Its offset in the optional header depends on PE32 vs PE32+ magic.
     dotnet = False
+    entry_rva = 0
+    image_base = 0
+    pe32_plus = False
     if opt_off + 2 <= len(data):
         magic = struct.unpack_from("<H", data, opt_off)[0]
-        dir_base = opt_off + (0x60 if magic == 0x10B else 0x70)  # PE32 vs PE32+
+        pe32_plus = magic == 0x20B
+        # AddressOfEntryPoint is at optional-header offset 0x10 in both formats.
+        if opt_off + 0x14 <= len(data):
+            entry_rva = struct.unpack_from("<I", data, opt_off + 0x10)[0]
+        # ImageBase: u32 @0x1C for PE32, u64 @0x18 for PE32+.
+        if pe32_plus:
+            if opt_off + 0x20 <= len(data):
+                image_base = struct.unpack_from("<Q", data, opt_off + 0x18)[0]
+        elif opt_off + 0x20 <= len(data):
+            image_base = struct.unpack_from("<I", data, opt_off + 0x1C)[0]
+        dir_base = opt_off + (0x70 if pe32_plus else 0x60)
         clr_off = dir_base + 14 * 8
         if clr_off + 8 <= len(data):
             clr_rva, clr_size = struct.unpack_from("<II", data, clr_off)
@@ -117,13 +130,14 @@ def parse_pe_headers(data: bytes) -> dict | None:
         if off + 40 > len(data):
             break
         name = data[off:off + 8].rstrip(b"\x00").decode("latin-1", "replace")
-        vsize, _vaddr, raw_size, raw_ptr = struct.unpack_from("<IIII", data, off + 8)
+        vsize, vaddr, raw_size, raw_ptr = struct.unpack_from("<IIII", data, off + 8)
         characteristics = struct.unpack_from("<I", data, off + 36)[0]
         raw = data[raw_ptr:raw_ptr + raw_size] if 0 < raw_ptr < len(data) else b""
         sections.append(
             {
                 "name": name,
                 "vsize": vsize,
+                "vaddr": vaddr,
                 "raw_size": raw_size,
                 "raw_ptr": raw_ptr,
                 "characteristics": characteristics,
@@ -135,6 +149,9 @@ def parse_pe_headers(data: bytes) -> dict | None:
     return {
         "machine": machine,
         "timestamp": timestamp,
+        "entry_rva": entry_rva,
+        "image_base": image_base,
+        "pe32_plus": pe32_plus,
         "sections": sections,
         "dotnet": dotnet,
         "overlay_offset": end_of_image if overlay_size else 0,
