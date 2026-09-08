@@ -50,12 +50,15 @@ def parse_elf_headers(data: bytes) -> dict | None:
     endian = "<" if ei_data == 1 else ">"
     is64 = ei_class == 2
     e_type = struct.unpack_from(endian + "H", data, 16)[0]
+    e_machine = struct.unpack_from(endian + "H", data, 18)[0]
 
     try:
         if is64:
+            e_entry = struct.unpack_from(endian + "Q", data, 0x18)[0]
             e_phoff = struct.unpack_from(endian + "Q", data, 0x20)[0]
             e_phentsize, e_phnum = struct.unpack_from(endian + "HH", data, 0x36)
         else:
+            e_entry = struct.unpack_from(endian + "I", data, 0x18)[0]
             e_phoff = struct.unpack_from(endian + "I", data, 0x1C)[0]
             e_phentsize, e_phnum = struct.unpack_from(endian + "HH", data, 0x2A)
     except struct.error:
@@ -70,7 +73,22 @@ def parse_elf_headers(data: bytes) -> dict | None:
         p_type = struct.unpack_from(endian + "I", data, off)[0]
         # p_flags sits at a different offset for 32- vs 64-bit program headers.
         p_flags = struct.unpack_from(endian + "I", data, off + (4 if is64 else 24))[0]
-        segments.append({"type": p_type, "flags": p_flags})
+        if is64:
+            p_offset, p_vaddr = struct.unpack_from(endian + "QQ", data, off + 8)
+            p_filesz, p_memsz = struct.unpack_from(endian + "QQ", data, off + 32)
+        else:
+            p_offset, p_vaddr = struct.unpack_from(endian + "II", data, off + 4)
+            p_filesz, p_memsz = struct.unpack_from(endian + "II", data, off + 16)
+        segments.append(
+            {
+                "type": p_type,
+                "flags": p_flags,
+                "offset": p_offset,
+                "vaddr": p_vaddr,
+                "filesz": p_filesz,
+                "memsz": p_memsz,
+            }
+        )
         if p_type == 3:  # PT_INTERP → dynamically linked
             has_interp = True
 
@@ -81,6 +99,8 @@ def parse_elf_headers(data: bytes) -> dict | None:
         "bits": 64 if is64 else 32,
         "endian": "little" if ei_data == 1 else "big",
         "type": e_type,  # 2=EXEC, 3=DYN(PIE/so)
+        "machine": e_machine,
+        "entry_va": e_entry,
         "stripped": stripped,
         "static": not has_interp and e_type == 2,
         "segments": segments,

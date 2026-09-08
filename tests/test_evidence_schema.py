@@ -6,7 +6,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from sandworm.core.evidence import EvidenceItem, EvidenceStore
+from sandworm.core.evidence import EvidenceItem, EvidenceLocation, EvidenceStore
 
 
 def _item(**over):
@@ -32,6 +32,31 @@ def test_confidence_bounds(bad):
 def test_extra_fields_forbidden():
     with pytest.raises(ValidationError):
         _item(unexpected="nope")
+
+
+def test_structured_location_requires_a_coordinate():
+    with pytest.raises(ValidationError):
+        EvidenceLocation()
+    with pytest.raises(ValidationError):
+        EvidenceLocation(file_offset=-1)
+
+    location = EvidenceLocation(
+        file_offset=0x240,
+        rva=0x1040,
+        virtual_address=0x401040,
+        section=".text",
+        function="entry",
+        instruction_address=0x401040,
+    )
+    assert location.label() == (
+        ".text · entry · file+0x240 · RVA 0x1040 · VA 0x401040 · insn 0x401040"
+    )
+
+
+def test_locations_participate_in_evidence_identity():
+    first = _item(locations=[EvidenceLocation(file_offset=10)])
+    second = _item(locations=[EvidenceLocation(file_offset=11)])
+    assert first.id != second.id
 
 
 def test_stable_id_dedupe():
