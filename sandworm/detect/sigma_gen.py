@@ -8,6 +8,7 @@ avoid a YAML dependency).
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 
 from ..core.evidence import EvidenceStore
@@ -25,33 +26,44 @@ class SigmaRule:
     kind: str = "ioc"  # "ioc" (matches atoms that rotate) | "behavioral" (survives infra changes)
 
     def to_yaml(self) -> str:
+        def scalar(value: object) -> str:
+            # JSON strings are valid YAML scalars and safely cover colons,
+            # hashes, quotes, booleans, and attacker-controlled values.
+            if value is None:
+                return "null"
+            if isinstance(value, bool):
+                return "true" if value else "false"
+            if isinstance(value, (int, float)):
+                return str(value)
+            return json.dumps(str(value), ensure_ascii=False)
+
         lines = [
-            f"title: {self.title}",
-            f"description: {self.description}",
-            "status: experimental",
-            "author: SANDWORM",
+            f"title: {scalar(self.title)}",
+            f"description: {scalar(self.description)}",
+            f"status: {scalar('experimental')}",
+            f"author: {scalar('SANDWORM')}",
             "logsource:",
         ]
         for k, v in self.logsource.items():
-            lines.append(f"    {k}: {v}")
+            lines.append(f"    {scalar(k)}: {scalar(v)}")
         lines.append("detection:")
         for sel_name, fields in self.detection.items():
             if sel_name == "condition":
                 continue
-            lines.append(f"    {sel_name}:")
+            lines.append(f"    {scalar(sel_name)}:")
             for fk, fv in fields.items():
                 if isinstance(fv, list):
-                    lines.append(f"        {fk}:")
+                    lines.append(f"        {scalar(fk)}:")
                     for item in fv:
-                        lines.append(f"            - {item}")
+                        lines.append(f"            - {scalar(item)}")
                 else:
-                    lines.append(f"        {fk}: {fv}")
-        lines.append(f"    condition: {self.detection.get('condition', 'selection')}")
+                    lines.append(f"        {scalar(fk)}: {scalar(fv)}")
+        lines.append(f"    condition: {scalar(self.detection.get('condition', 'selection'))}")
         if self.tags:
             lines.append("tags:")
             for t in self.tags:
-                lines.append(f"    - {t}")
-        lines.append(f"level: {self.level}")
+                lines.append(f"    - {scalar(t)}")
+        lines.append(f"level: {scalar(self.level)}")
         return "\n".join(lines)
 
 

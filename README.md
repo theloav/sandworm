@@ -4,11 +4,11 @@
 
 <br/>
 
-![tests](https://img.shields.io/badge/tests-209%20passing-2ea043)
+![tests](https://img.shields.io/badge/tests-passing-2ea043)
 ![lint](https://img.shields.io/badge/ruff%20%2B%20mypy-clean-2ea043)
 ![python](https://img.shields.io/badge/python-3.11%2B-3776ab)
 ![license](https://img.shields.io/badge/license-MIT-blue)
-![offline](https://img.shields.io/badge/runs-fully%20offline-7ee787)
+![safe default](https://img.shields.io/badge/default-static--only-7ee787)
 
 ### Given a sample, reconstruct what happened, explain why, and emit detections.
 
@@ -46,6 +46,9 @@ sandworm analyze samples/synthetic/loader_demo.exe \
   --memory-report samples/synthetic/recorded_vol3_report.json
 #   → temporal timeline, memory forensics (hidden procs / API hooks / carved config),
 #     and ATT&CK techniques upgraded inferred → observed.
+
+# Live Windows analysis through a separately managed, attested CAPE deployment:
+sandworm analyze suspicious.exe --backend cape --sandbox-network disabled
 
 sandworm analyze sample --stream      # live evidence feed, ALERT on high-signal findings
 sandworm ask "what execution sinks were found?"   # graph-grounded copilot
@@ -139,9 +142,9 @@ flowchart TB
             FP[fingerprint: fuzzy file MinHash]
             UNPACK["unpack: packer + entropy<br/>→ emulated unpack (Unicorn)"]
         end
-        subgraph DYN["DYNAMIC · gated by isolation"]
-            CAPE[windows CAPE/DRAKVUF]
-            LIN[linux / script / php sandbox]
+        subgraph DYN["DYNAMIC · external SandboxBackend"]
+            CAPE[windows CAPE backend]
+            LIN[linux microVM backend · planned]
         end
         subgraph MEM["MEMORY · offline replay"]
             VOL3["vol3: pslist/psscan/malfind/<br/>apihooks/config"]
@@ -149,7 +152,7 @@ flowchart TB
     end
 
     TRIAGE --> STATIC
-    TRIAGE -. "ISOLATION GATE<br/>core/isolation.py<br/>refuse → static-only" .-> DYN
+    TRIAGE -. "submit / collect / destroy<br/>sandbox/base.py" .-> DYN
     REPORTS["recorded CAPE / vol3 JSON<br/>bound by target_sha256"] -- "replay (no detonation)" --> CAPE
     REPORTS -- "replay" --> VOL3
 
@@ -201,12 +204,12 @@ flowchart TB
    sample bytes ─────────────▶│   triage     │ → pe/elf/php/script/vbs/hta/lnk/pdf/office/generic
                               └──────┬───────┘
             ┌────────────────────────┼─────────────────────────────┐
-            ▼                        ▼ (ISOLATION GATE)             ▼ (offline replay,
+            ▼                        ▼ (EXTERNAL BACKEND)           ▼ (offline replay,
    ┌──────────────────────┐ ┌───────────────────┐          bound by target_sha256)
-   │ [P] STATIC (always)  │ │ [P] DYNAMIC(gated)│          ┌───────────────────┐
+   │ [P] STATIC (always)  │ │ [P] DYNAMIC      │          ┌───────────────────┐
    │ common pe elf php    │ │ CAPE/DRAKVUF      │◀───────  │ recorded CAPE JSON │
-   │ script lnk pdf       │ │ linux/script/php  │          └───────────────────┘
-   │ decode fingerprint   │ │ refuse→static-only│          ┌───────────────────┐
+   │ script lnk pdf       │ │ backend artifacts │          └───────────────────┘
+   │ decode fingerprint   │ │ none→static-only  │          ┌───────────────────┐
    │ office UNPACK+emulate│ └─────────┬─────────┘  MEMORY  │ recorded vol3 JSON │──▶ [P] vol3
    └──────────┬───────────┘           │            ◀────────└───────────────────┘
               └───────────┬───────────┴───────────────────────────┬─┘
@@ -233,11 +236,11 @@ flowchart TB
 1. **Triage** (`core/triage.py`) — magic-byte + heuristic format detection
    (MZ+verified PE signature, ELF, Mach-O, LNK CLSID, `%PDF`, `<?php`, shebang,
    VBScript/HTA, OLE, OOXML/JAR/APK ZIP markers, …) selects which analyzer tags fire.
-2. **Isolation gate** (`core/isolation.py`) — decides whether the dynamic lane may
-   run *at all*. If isolation can't be verified, dynamic is **refused** and the run
-   continues static-only.
-3. **Static analyzers** run unconditionally; **dynamic** analyzers run only behind
-   the gate.
+2. **Static analyzers** run unconditionally. Built-in analyzers never launch the
+   sample in the controller process.
+3. **Sandbox backend** (`sandbox/base.py`) — an explicitly configured external
+   backend owns submission, execution, collection, and worker teardown. Without
+   one, the run remains static-only. CAPE is the first live backend.
 4. **Recorded-report replay** (offline) — `--cape-report` / `--memory-report`
    ingest prior evidence; this executes nothing, so it runs without the gate. Each
    report must declare `target_sha256` matching the sample, or it is refused (a
@@ -255,7 +258,7 @@ flowchart TB
 | Lane | Source prefix | Runs when | Provenance |
 |------|---------------|-----------|------------|
 | **Static** | `static.*` | always | the sample bytes |
-| **Dynamic** | `dynamic.*` | only behind the verified isolation gate (live), **or** offline replay of a recorded report | live = gated; replay = bound by `target_sha256` |
+| **Dynamic** | `dynamic.*` | external `SandboxBackend`, **or** offline replay of a recorded report | live = attested artifact bundle; replay = bound by `target_sha256` |
 | **Memory** | `memory.*` | volatility3 over an image, **or** offline replay of a recorded vol3 report | bound by `target_sha256` |
 
 Runtime-observed evidence (`dynamic.*` / `memory.*`) automatically **upgrades a
@@ -348,20 +351,22 @@ Built on the evidence spine without core rewrites. Each is independently tested.
 
 ---
 
-## Isolation & safe handling (enforced in code, not docs)
+## Isolation & safe handling
 
-* **Isolation gate** (`core/isolation.py`): dynamic analysis runs *only* inside a
-  verified, network-isolated, ephemeral detonation environment with all egress
-  routed to a simulated responder (INetSim/FakeNet). If isolation can't be
-  verified, SANDWORM **refuses to detonate**, logs an `IsolationError`, and falls
-  back to static-only. (`tests/test_isolation_gate.py`.)
+* **Backend-only execution** (`sandbox/base.py`, `core/pipeline.py`): the
+  controller never dispatches execution-capable analyzers in-process. A live
+  backend must return a sample-bound artifact manifest with an attested image and
+  isolation status; jobs are released in a `finally` path. Without a backend,
+  SANDWORM is static-only.
+* **CAPE backend** (`sandbox/cape.py`): requires explicit deployment attestation,
+  an image identifier, bounded responses, and HTTPS unless the operator opts into
+  lab-only HTTP. Simulated networking requires a configured CAPE route.
 * **Provenance binding**: recorded dynamic/memory reports are bound to their source
   sample by `target_sha256`; mismatched or unbound reports are refused.
-* **Encrypted at rest** (`core/sample.py`): samples are stored only inside
-  encrypted archives, never written executable to a shared path — **AES-256** when
-  `pyzipper` is installed (`.[secure]`), a password-marked stdlib ZIP defang
-  otherwise. `SampleStore.encryption` reports the active mode. A configurable size
-  cap (`SANDWORM_MAX_SAMPLE_BYTES`) guards against loading a multi-GB file whole.
+* **Encrypted at rest** (`core/sample.py`): sample storage requires AES-256 via
+  `pyzipper` (`.[secure]`) and fails closed when it is unavailable. There is no
+  plaintext ZIP fallback. A configurable size cap (`SANDWORM_MAX_SAMPLE_BYTES`)
+  guards against loading a multi-GB file whole.
 * **Benign synthetic samples by default** (`samples/synthetic/`): the whole pipeline
   demos end-to-end with zero real malware on disk.
 * **Audit log** (`core/audit.py`): every analyzer action and every (refused)
@@ -375,7 +380,7 @@ Full detail: [`docs/threat-model.md`](docs/threat-model.md),
 
 ## The plugin SDK
 
-A new analyzer is one file implementing the `Analyzer` protocol
+A new static analyzer is one file implementing the `Analyzer` protocol
 (`name`, `handles`, `requires_isolation`, `run(sample, ctx) -> [EvidenceItem]`):
 
 ```python
@@ -392,13 +397,16 @@ Drop it in a directory, `sandworm plugins --dir <dir>`. No core changes. See
 [`docs/writing-an-analyzer.md`](docs/writing-an-analyzer.md) and
 [`plugins_example/`](plugins_example/example_analyzer.py).
 
+Plugins must not execute submitted samples. Dynamic integrations implement the
+separate `SandboxBackend` protocol and return inert, content-hashed artifacts.
+
 ---
 
 ## CLI reference
 
 | Command | Purpose |
 |---------|---------|
-| `sandworm analyze <sample>` | Full run → HTML report. Flags: `--cape-report`, `--memory-report`, `--stream`, `--no-dynamic`, `--no-cache`, `--store`, `-o`. Exports: `--stix`, `--misp`, `--openioc`, `--navigator`, `--csv`, `--json`. |
+| `sandworm analyze <sample>` | Full run → HTML report. Live flags: `--backend cape`, `--sandbox-network disabled\|simulated`. Replay: `--cape-report`, `--memory-report`. Also `--stream`, `--no-dynamic`, `--no-cache`, `--store`, `-o`, and defender exports. |
 | `sandworm batch <dir>` | Analyse a directory → one JSON/SARIF report. Flags: `--format json\|sarif`, `--out`, `--recursive`, `--fail-on Low\|Medium\|High\|Critical` (verdict-based exit code). |
 | `sandworm replay <run_id>` | Print the timeline + evidence for a persisted run. |
 | `sandworm lineage [run_id]` | Behavioural + byte + imphash lineage over persisted runs + nearest-neighbour diff. |
@@ -414,8 +422,8 @@ Drop it in a directory, `sandworm plugins --dir <dir>`. No core changes. See
 Python 3.11+, pydantic v2, typer, jinja2. Optional, gracefully-degrading backends:
 lief/pefile/pyelftools/capstone + capa (static), oletools (macros), **numpy**
 (`.[perf]` — entropy acceleration), **pyzipper** (`.[secure]` — AES-256 at rest),
-**unicorn + capstone** (`.[emulate]` — stub emulation for unpacking), CAPE/DRAKVUF
-adapter (Windows dynamic), locked-down containers (Linux/script/PHP dynamic),
+**unicorn + capstone** (`.[emulate]` — stub emulation for unpacking), CAPE v2 REST
+backend (Windows dynamic),
 volatility3 (memory), neo4j (graph; in-memory fallback), and a provider-agnostic
 copilot (Anthropic / OpenAI-compatible / offline `mock` default). Absence of any
 backend degrades gracefully — the synthetic demos and the full test suite run

@@ -7,7 +7,12 @@ import zipfile
 import pytest
 
 from sandworm.core.config import Config
-from sandworm.core.sample import Sample, SampleStore, _pyzipper
+from sandworm.core.sample import (
+    Sample,
+    SampleEncryptionUnavailableError,
+    SampleStore,
+    _pyzipper,
+)
 
 MAL = b"MZ\x90\x00 this represents malicious sample bytes"
 
@@ -17,6 +22,7 @@ def store(tmp_path):
     return SampleStore(Config(work_dir=tmp_path / "wd"))
 
 
+@pytest.mark.skipif(_pyzipper() is None, reason="AES sample store support not installed")
 def test_roundtrip_preserves_bytes(store):
     s = Sample.from_bytes("evil.exe", MAL)
     store.store(s)
@@ -25,6 +31,7 @@ def test_roundtrip_preserves_bytes(store):
     assert loaded.sha256 == s.sha256
 
 
+@pytest.mark.skipif(_pyzipper() is None, reason="AES sample store support not installed")
 def test_inner_entry_is_non_executable(store):
     # The archived entry must never carry an executable extension.
     s = Sample.from_bytes("evil.exe", MAL)
@@ -38,6 +45,17 @@ def test_inner_entry_is_non_executable(store):
 def test_missing_sample_raises(store):
     with pytest.raises(FileNotFoundError):
         store.load("0" * 64)
+
+
+def test_store_fails_closed_without_aes_support(tmp_path, monkeypatch):
+    monkeypatch.setattr("sandworm.core.sample._pyzipper", lambda: None)
+    unavailable = SampleStore(Config(work_dir=tmp_path / "wd"))
+    sample = Sample.from_bytes("evil.exe", MAL)
+
+    assert unavailable.encryption == "unavailable"
+    with pytest.raises(SampleEncryptionUnavailableError, match="pyzipper"):
+        unavailable.store(sample)
+    assert not unavailable._archive_path(sample.sha256).exists()
 
 
 @pytest.mark.skipif(_pyzipper() is None, reason="pyzipper not installed")

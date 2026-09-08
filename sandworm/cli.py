@@ -11,6 +11,7 @@ Commands:
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 import typer
 
@@ -18,7 +19,12 @@ from .analyzers.registry import REGISTRY, register_builtins
 from .core.config import get_config
 from .core.evidence import EvidenceStore
 from .core.pipeline import analyze_sample, build_report_inputs, persist_run
-from .core.sample import Sample, SampleStore, SampleTooLargeError
+from .core.sample import (
+    Sample,
+    SampleEncryptionUnavailableError,
+    SampleStore,
+    SampleTooLargeError,
+)
 from .reconstruct.attack_map import map_evidence
 from .reconstruct.graph import build_graph
 
@@ -30,6 +36,10 @@ def analyze(
     sample_path: str = typer.Argument(..., help="Path to the sample to analyze."),
     out: str = typer.Option("", "--out", "-o", help="HTML report output path."),
     no_dynamic: bool = typer.Option(False, "--no-dynamic", help="Skip the dynamic lane entirely."),
+    backend: str = typer.Option("", "--backend", help="Live sandbox backend: cape."),
+    sandbox_network: str = typer.Option(
+        "disabled", "--sandbox-network", help="Sandbox networking: disabled or simulated."
+    ),
     cape_report: str = typer.Option("", "--cape-report", help="Ingest a recorded CAPE/DRAKVUF JSON report (offline replay; not a live detonation)."),
     memory_report: str = typer.Option("", "--memory-report", help="Ingest a recorded volatility3 JSON report (offline replay)."),
     store_sample: bool = typer.Option(False, "--store", help="Defang+store the sample encrypted-at-rest."),
@@ -52,13 +62,30 @@ def analyze(
         if val and not Path(val).exists():
             typer.secho(f"{label} not found: {val}", fg=typer.colors.RED)
             raise typer.Exit(1)
+    backend = backend.strip().lower()
+    if backend not in {"", "cape"}:
+        typer.secho(f"unsupported sandbox backend: {backend}", fg=typer.colors.RED)
+        raise typer.Exit(1)
+    if sandbox_network not in {"disabled", "simulated"}:
+        typer.secho("--sandbox-network must be 'disabled' or 'simulated'", fg=typer.colors.RED)
+        raise typer.Exit(1)
+    if backend and no_dynamic:
+        typer.secho("--backend cannot be combined with --no-dynamic", fg=typer.colors.RED)
+        raise typer.Exit(1)
+    if backend and (cape_report or memory_report):
+        typer.secho("use either --backend or recorded report replay, not both", fg=typer.colors.RED)
+        raise typer.Exit(1)
     try:
         sample = Sample.from_path(p, cfg)
     except SampleTooLargeError as exc:
         typer.secho(str(exc), fg=typer.colors.RED)
         raise typer.Exit(1) from exc
     if store_sample:
-        SampleStore(cfg).store(sample)
+        try:
+            SampleStore(cfg).store(sample)
+        except SampleEncryptionUnavailableError as exc:
+            typer.secho(str(exc), fg=typer.colors.RED)
+            raise typer.Exit(1) from exc
 
     feed = None
     if stream:
@@ -68,9 +95,39 @@ def analyze(
         feed = StreamFeed(sink=_emit)
         typer.secho("── live evidence feed ──", fg=typer.colors.CYAN)
 
+    sandbox_backend = None
+    sandbox_policy = None
+    if backend == "cape":
+        from .sandbox import AnalysisPolicy, CAPEBackend
+
+        if not cfg.cape_url:
+            typer.secho("CAPE backend requires SANDWORM_CAPE_URL", fg=typer.colors.RED)
+            raise typer.Exit(1)
+        if not cfg.cape_image_id:
+            typer.secho("CAPE backend requires SANDWORM_CAPE_IMAGE_ID", fg=typer.colors.RED)
+            raise typer.Exit(1)
+        try:
+            sandbox_backend = CAPEBackend(
+                base_url=cfg.cape_url,
+                token=cfg.cape_token,
+                artifact_dir=cfg.sandbox_artifact_dir,
+                image_id=cfg.cape_image_id,
+                isolation_verified=cfg.cape_isolation_verified,
+                simulated_route=cfg.cape_simulated_route,
+                allow_insecure_http=cfg.cape_allow_insecure_http,
+            )
+            network_mode: Literal["disabled", "simulated"] = (
+                "simulated" if sandbox_network == "simulated" else "disabled"
+            )
+            sandbox_policy = AnalysisPolicy(network=network_mode)
+        except (TypeError, ValueError) as exc:
+            typer.secho(f"invalid CAPE configuration: {exc}", fg=typer.colors.RED)
+            raise typer.Exit(1) from exc
+
     result = analyze_sample(
         sample, config=cfg, enable_dynamic=not no_dynamic,
         cape_report=cape_report or None, memory_report=memory_report or None,
+        sandbox_backend=sandbox_backend, sandbox_policy=sandbox_policy,
         on_evidence=feed, use_cache=not no_cache,
     )
     if feed is not None:

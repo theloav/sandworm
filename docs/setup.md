@@ -3,7 +3,7 @@
 ## Requirements
 
 * Python 3.11+
-* (optional) Docker, for the isolated detonation environments + FakeNet/INetSim
+* (optional) access to a separately managed CAPE v2 deployment
 
 ## Install
 
@@ -34,16 +34,19 @@ open .sandworm/runs/<run_id>/report.html
 | Variable | Default | Meaning |
 |----------|---------|---------|
 | `SANDWORM_WORK_DIR` | `.sandworm` | runs, samples, audit log |
-| `SANDWORM_ALLOW_DETONATION` | `false` | operator opt-in for the dynamic lane |
-| `SANDWORM_ISOLATED` | unset | isolation marker set *inside* the detonation env |
-| `SANDWORM_SIMNET_HOST` | `10.0.0.1` | simulated-network responder address |
+| `SANDWORM_CAPE_URL` | unset | CAPE v2 base URL ending in `/apiv2/` |
+| `SANDWORM_CAPE_TOKEN` | unset | scoped CAPE API token |
+| `SANDWORM_CAPE_IMAGE_ID` | unset | immutable analysis-image identifier |
+| `SANDWORM_CAPE_ISOLATION_VERIFIED` | `false` | operator attestation after containment validation |
+| `SANDWORM_CAPE_ALLOW_HTTP` | `false` | explicitly permit plaintext HTTP in a closed lab |
+| `SANDWORM_CAPE_SIMULATED_ROUTE` | unset | CAPE route name for INetSim/FakeNet-style networking |
 | `SANDWORM_SAMPLE_PASSWORD` | `infected` | encrypted-at-rest archive password |
 | `SANDWORM_NEO4J_URI` | unset | enable Neo4j graph (else in-memory) |
 | `SANDWORM_LLM_PROVIDER` | `mock` | `mock` / `anthropic` / `openai` |
 | `SANDWORM_LLM_MODEL` | `claude-opus-4-8` | model id for the copilot |
 
-See `.env.example`. The defaults are **safe**: detonation is off and the simulated
-network is assumed, so a fresh checkout cannot reach a real host.
+See `.env.example`. The default is static-only; no backend means no sample
+execution.
 
 ## Quality gate
 

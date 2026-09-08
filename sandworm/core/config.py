@@ -27,12 +27,31 @@ class Config:
     work_dir: Path = field(default_factory=lambda: Path(os.environ.get("SANDWORM_WORK_DIR", ".sandworm")))
 
     # --- Isolation / safety (load-bearing) ---
-    # Detonation is OFF unless explicitly enabled AND the isolation gate passes.
+    # Deprecated compatibility knobs. They can no longer authorize execution;
+    # live analysis requires a SandboxBackend.
     allow_detonation: bool = field(default_factory=lambda: _env_bool("SANDWORM_ALLOW_DETONATION", False))
     # The only host egress is permitted to: the simulated-network responder.
     simulated_network_host: str = field(default_factory=lambda: os.environ.get("SANDWORM_SIMNET_HOST", "10.0.0.1"))
     # Marker env var set inside the detonation container/VM to prove isolation.
     isolation_marker_env: str = field(default_factory=lambda: os.environ.get("SANDWORM_ISOLATION_MARKER", "SANDWORM_ISOLATED"))
+
+    # --- External sandbox backends ---
+    cape_url: str | None = field(default_factory=lambda: os.environ.get("SANDWORM_CAPE_URL"))
+    cape_token: str | None = field(
+        default_factory=lambda: os.environ.get("SANDWORM_CAPE_TOKEN"), repr=False
+    )
+    cape_image_id: str = field(
+        default_factory=lambda: os.environ.get("SANDWORM_CAPE_IMAGE_ID", "")
+    )
+    cape_isolation_verified: bool = field(
+        default_factory=lambda: _env_bool("SANDWORM_CAPE_ISOLATION_VERIFIED", False)
+    )
+    cape_allow_insecure_http: bool = field(
+        default_factory=lambda: _env_bool("SANDWORM_CAPE_ALLOW_HTTP", False)
+    )
+    cape_simulated_route: str | None = field(
+        default_factory=lambda: os.environ.get("SANDWORM_CAPE_SIMULATED_ROUTE")
+    )
 
     # --- Encryption-at-rest for the sample store ---
     sample_store_password: str = field(default_factory=lambda: os.environ.get("SANDWORM_SAMPLE_PASSWORD", "infected"))
@@ -41,6 +60,11 @@ class Config:
     # accidental multi-GB memory dump being loaded whole into RAM and scanned.
     # 0 disables the cap. Default 512 MiB comfortably covers real malware.
     max_sample_bytes: int = field(default_factory=lambda: int(os.environ.get("SANDWORM_MAX_SAMPLE_BYTES", 512 * 1024 * 1024)))
+    max_report_bytes: int = field(
+        default_factory=lambda: int(
+            os.environ.get("SANDWORM_MAX_REPORT_BYTES", 128 * 1024 * 1024)
+        )
+    )
 
     # --- Graph backend ---
     neo4j_uri: str | None = field(default_factory=lambda: os.environ.get("SANDWORM_NEO4J_URI"))
@@ -71,6 +95,12 @@ class Config:
     @property
     def cache_dir(self) -> Path:
         d = self.work_dir / "cache"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    @property
+    def sandbox_artifact_dir(self) -> Path:
+        d = self.work_dir / "sandbox-artifacts"
         d.mkdir(parents=True, exist_ok=True)
         return d
 

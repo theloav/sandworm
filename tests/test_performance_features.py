@@ -32,6 +32,8 @@ def test_cache_miss_then_hit(cfg):
 
     r2 = analyze_sample(sample, config=cfg, enable_dynamic=False)
     assert r2.analyzers_run == ["<cache>"]
+    assert r1.run_id != r2.run_id
+    assert all(item.run_id == r2.run_id for item in r2.store)
     # Same evidence and same ATT&CK mapping reconstructed from cache.
     assert len(r2.store) == len(r1.store)
     assert {m.technique_id for m in r2.mappings} == {m.technique_id for m in r1.mappings}

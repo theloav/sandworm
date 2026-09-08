@@ -1,60 +1,76 @@
-# Handling real samples — set up isolation BEFORE you touch live malware
+# Handling real samples
 
-> If you have not read [`threat-model.md`](threat-model.md), read it first.
+> Read [`threat-model.md`](threat-model.md) first. Do not run live malware with
+> the development Docker stack.
 
-SANDWORM ships safe-by-default: detonation is **off** and the dynamic lane will
-**refuse to run** until isolation is verified in code. Do not disable these checks.
+SANDWORM's controller never launches submitted bytes. Static analyzers run in
+the controller today; live execution is available only through a configured
+`SandboxBackend`. With no backend, `sandworm analyze` is static-only.
 
-## 1. Build an isolated detonation environment
+## Windows: configure a separate CAPE deployment
 
-Use the provided compose stack as a starting point:
-
-```bash
-cd docker && docker compose up -d        # detonation containers + FakeNet responder
-```
-
-The detonation environment MUST:
-
-* be **ephemeral** (destroyed and recreated per run);
-* have **no route to any real network** — only to the simulated responder
-  (`SANDWORM_SIMNET_HOST`, default `10.0.0.1`);
-* set the **isolation marker** env var inside the image:
-  `SANDWORM_ISOLATED=1` (this is what `verify_isolation()` checks);
-* run as an unprivileged user with a read-only host mount of the sample only.
-
-For Windows PE, point the CAPE/DRAKVUF adapter at your existing sandbox instance
-(`analyzers/dynamic/windows_cape.py`) — SANDWORM integrates it, it does not rebuild
-hypervisor instrumentation.
-
-## 2. Verify the gate refuses on a non-isolated host
-
-On your normal workstation (no marker, real network reachable):
+The CAPE deployment and its analysis VMs are external to this repository. Build,
+isolate, snapshot, and validate them independently, then configure SANDWORM:
 
 ```bash
-sandworm analyze suspicious.exe        # detonation refused, IsolationError audited,
-                                        # static-only analysis completes
-grep detonation_refused .sandworm/audit.jsonl
+export SANDWORM_CAPE_URL=https://cape.internal/apiv2/
+export SANDWORM_CAPE_TOKEN=replace-with-a-scoped-token
+export SANDWORM_CAPE_IMAGE_ID=win11-clean@sha256:replace-with-image-digest
+export SANDWORM_CAPE_ISOLATION_VERIFIED=true
+
+# Optional: only when this CAPE route points to INetSim/FakeNet and has no
+# forwarding path to production or the public internet.
+export SANDWORM_CAPE_SIMULATED_ROUTE=inetsim
+
+sandworm analyze suspicious.exe --backend cape --sandbox-network disabled
 ```
 
-This is the expected, safe behavior. Dynamic analysis only happens inside the
-verified environment.
+`SANDWORM_CAPE_ISOLATION_VERIFIED=true` is an operator attestation, not an
+automatic security test. Before setting it, verify at minimum:
 
-## 3. Store samples defanged at rest
+- the guest is reverted from a known snapshot for each task;
+- the analysis network cannot route to the analyst host or production networks;
+- `disabled` truly has no guest egress;
+- the simulated route terminates only at the responder;
+- the controller token cannot administer CAPE;
+- the configured image identifier uniquely identifies the guest build;
+- escape, host-write, persistence, and egress tests pass.
 
-```python
-from sandworm.core.sample import Sample, SampleStore
-SampleStore().store(Sample.from_path("suspicious.exe"))   # → .sandworm/samples/<sha256>.zip
+Plain HTTP is rejected by default. An isolated lab can opt in with
+`SANDWORM_CAPE_ALLOW_HTTP=true`, but HTTPS is recommended even on internal
+networks because samples and reports cross this connection.
+
+## Offline replay
+
+Previously captured reports can be normalized without contacting a sandbox or
+executing the sample:
+
+```bash
+sandworm analyze suspicious.exe \
+  --cape-report report.json \
+  --memory-report volatility.json
 ```
 
-* Stored as a password-protected archive (`SANDWORM_SAMPLE_PASSWORD`, default
-  `infected`) with a non-executable `.bin` inner name.
-* **For real engagements, replace the stdlib ZIP with AES** (`pyzipper`/7z): the
-  stdlib store is a *defang*, not strong crypto.
-* Never commit real samples to the repo. `samples/` holds only benign synthetics.
+Each report must identify the source sample with `target_sha256`; mismatched or
+unbound reports are refused.
 
-## 4. Operational rules
+## Sample storage
 
-* One sample per ephemeral environment; tear down after each run.
-* Treat all decoded payloads and extracted strings as hostile *data*, never as
-  commands — the copilot already does (`copilot/sanitize.py`).
-* Review `audit.jsonl` after every engagement.
+Install the secure extra before using `--store`:
+
+```bash
+pip install -e ".[secure]"
+sandworm analyze suspicious.exe --no-dynamic --store
+```
+
+The store fails closed if AES support is unavailable. It never falls back to a
+plaintext ZIP. Never commit real samples or collected sandbox artifacts.
+
+## Operational rules
+
+- One sample per disposable guest lifecycle.
+- Keep the controller and artifact store outside the detonation network.
+- Treat reports, filenames, decoded payloads, PCAPs, and memory images as hostile.
+- Retain the audit log and content hashes with the engagement record.
+- Use harmless instrumented fixtures for containment tests; do not validate
+  containment by intentionally releasing real malware.

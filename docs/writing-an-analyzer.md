@@ -15,7 +15,7 @@ from sandworm.analyzers.base import Context
 class Analyzer(Protocol):
     name: str                    # unique, e.g. "static.php" or "plugin.wallet"
     handles: set[str]            # format tags claimed, e.g. {"php"} or {"*"} for all
-    requires_isolation: bool     # True => dynamic lane, only runs behind the gate
+    requires_isolation: bool     # must remain False for controller analyzers
     def analyze(self, sample: Sample, ctx: Context) -> list[EvidenceItem]: ...
 ```
 
@@ -24,8 +24,9 @@ Rules:
 * **Only write `EvidenceItem`s.** Never call another analyzer; never reach the
   network; never write the sample to an executable path.
 * **`confidence` is required** on every item (0–1).
-* Set `requires_isolation = True` if you execute/detonate the sample — the registry
-  and the isolation gate will keep you out unless isolation is verified.
+* Controller analyzers must never execute or detonate the sample. Dynamic
+  integrations implement `sandworm.sandbox.SandboxBackend` instead; built-ins do
+  not register analyzers with `requires_isolation = True`.
 
 ## Easiest path: subclass `BaseAnalyzer`
 

@@ -4,16 +4,11 @@ SANDWORM does NOT build hypervisor instrumentation. This adapter submits the PE 
 a CAPE/DRAKVUF instance (or ingests a pre-produced report) and normalizes its
 process/file/registry/network/api output into EvidenceItems.
 
-Two distinct modes, with very different safety properties:
-
-* **Live detonation** (submitting the sample to a sandbox) requires the verified
-  isolation gate — this analyzer is ``requires_isolation = True`` so the registry
-  only dispatches it inside a network-isolated detonation environment.
-* **Replay** of a *recorded* CAPE report (``normalize_cape_report``) is NOT
+Live submission is implemented by ``sandworm.sandbox.CAPEBackend`` and never by
+an analyzer running in the controller. Replay of a *recorded* CAPE report
+(``normalize_cape_report``) is NOT
   detonation: it ingests evidence produced by a prior, properly-isolated run. It
-  executes nothing, so it is as safe as static analysis and may run offline. The
-  pipeline calls the module-level normalizer directly for this — it does not pass
-  through the detonation gate.
+executes nothing, so it is as safe as static analysis and may run offline.
 """
 
 from __future__ import annotations
@@ -32,8 +27,8 @@ SOURCE = "dynamic.windows.cape"
 def normalize_cape_report(report: dict, ctx: Context, ref: str) -> Iterator[EvidenceItem]:
     """Normalize a CAPE/DRAKVUF JSON report into EvidenceItems.
 
-    This is pure data transformation over an already-produced report — it never
-    executes the sample, so it is safe to call without the isolation gate.
+    This is pure data transformation over an already-produced report and never
+    executes the sample.
     """
     behavior = report.get("behavior", {})
     start = report.get("start_time")  # ISO; lets the timeline show absolute times too
