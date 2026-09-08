@@ -22,6 +22,7 @@ def store(tmp_path):
     return SampleStore(Config(work_dir=tmp_path / "wd"))
 
 
+@pytest.mark.skipif(_pyzipper() is None, reason="AES sample store support not installed")
 def test_roundtrip_preserves_bytes(store):
     s = Sample.from_bytes("evil.exe", MAL)
     store.store(s)
@@ -30,6 +31,7 @@ def test_roundtrip_preserves_bytes(store):
     assert loaded.sha256 == s.sha256
 
 
+@pytest.mark.skipif(_pyzipper() is None, reason="AES sample store support not installed")
 def test_inner_entry_is_non_executable(store):
     # The archived entry must never carry an executable extension.
     s = Sample.from_bytes("evil.exe", MAL)
