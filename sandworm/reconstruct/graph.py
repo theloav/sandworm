@@ -17,6 +17,7 @@ from ..graphdb.schema import (
     NODE_DETECTION,
     NODE_EVIDENCE,
     NODE_FILE,
+    NODE_FUNCTION,
     NODE_HOST,
     NODE_MACRO,
     NODE_MODULE,
@@ -36,6 +37,8 @@ _ARTIFACT_LABEL = {
     "registry": NODE_REGISTRY,
     "network": NODE_HOST,
     "module": NODE_MODULE,
+    "function": NODE_FUNCTION,
+    "call": NODE_FUNCTION,
     "macro": NODE_MACRO,
     "string": NODE_STRING,
     "api_call": NODE_API,
@@ -59,7 +62,7 @@ def _object_identity(it) -> tuple[str, dict]:
 
 def _subject_identity(it) -> tuple[str, dict] | None:
     subj = it.subject
-    for key in ("name", "pid", "analyzer"):
+    for key in ("name", "pid", "function", "analyzer"):
         if key in subj and subj[key] not in (None, ""):
             return str(subj[key]), {"kind": key, **{k: v for k, v in subj.items() if isinstance(v, (str, int, float, bool))}}
     return None
@@ -111,6 +114,7 @@ def build_graph(store: EvidenceStore, mappings: list[AttackMapping] | None = Non
                     "confidence": it.confidence,
                     "ts": it.ts,
                     "summary": f"{it.source} {it.operation} {obj_id}",
+                    "locations": [location.label() for location in it.locations],
                 },
             )
         )
@@ -119,11 +123,21 @@ def build_graph(store: EvidenceStore, mappings: list[AttackMapping] | None = Non
         subj = _subject_identity(it)
         if subj:
             subj_id, subj_props = subj
-            if subj_props.get("kind") in {"name", "pid"}:
-                subj_node_id = _node_key(NODE_PROCESS, subj_id)
-                graph.add_node(Node(subj_node_id, NODE_PROCESS, {"display": subj_id, **subj_props}))
+            subject_label = (
+                NODE_FUNCTION if subj_props.get("kind") == "function" else NODE_PROCESS
+            )
+            if subj_props.get("kind") in {"name", "pid", "function"}:
+                subj_node_id = _node_key(subject_label, subj_id)
+                graph.add_node(
+                    Node(subj_node_id, subject_label, {"display": subj_id, **subj_props})
+                )
                 graph.add_edge(
-                    Edge(subj_node_id, obj_node_id, it.operation.upper(), {"confidence": it.confidence, "evidence": it.id, "ts": it.ts})
+                    Edge(
+                        subj_node_id,
+                        obj_node_id,
+                        "CALLS" if it.operation == "call" else it.operation.upper(),
+                        {"confidence": it.confidence, "evidence": it.id, "ts": it.ts},
+                    )
                 )
 
     # ATT&CK technique nodes. Wire BOTH evidence→technique (citations) and the

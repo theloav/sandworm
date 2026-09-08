@@ -111,6 +111,7 @@ class EvidenceItem(BaseModel):
     details: dict                 # format-specific, free-form
     confidence: float             # 0..1 — REQUIRED on every item
     evidence_refs: list[str]      # back-links to raw artifacts / parent layers
+    locations: list[EvidenceLocation]  # file offset / RVA / VA / function / event
 ```
 
 `confidence` is **required and validated on every item** — explainability depends
@@ -134,6 +135,7 @@ flowchart TB
             COMMON[common: strings/IOCs/entropy/ransomware · wide-string aware]
             PE[pe / dll · .NET/CLR · W^X · overlay · imphash]
             ELF[elf · RWX / exec-stack / static-stripped / UPX]
+            DISASM["disasm · entry-reachable functions<br/>basic blocks · direct calls · xrefs"]
             PHPL[php: recursive eval/base64 peel]
             SCRIPT[script: ps1 / js / sh / vbs / hta]
             OFFICE[office macros]
@@ -191,7 +193,7 @@ flowchart TB
     classDef producer fill:#1f6feb,color:#fff,stroke:#79c0ff,stroke-width:1px;
     classDef spine fill:#d29922,color:#fff,stroke:#f2cc60,stroke-width:3px;
     classDef consumer fill:#238636,color:#fff,stroke:#56d364,stroke-width:1px;
-    class COMMON,PE,ELF,PHPL,SCRIPT,OFFICE,LNKPDF,DECODE,FP,UNPACK,CAPE,LIN,VOL3 producer;
+    class COMMON,PE,ELF,DISASM,PHPL,SCRIPT,OFFICE,LNKPDF,DECODE,FP,UNPACK,CAPE,LIN,VOL3 producer;
     class STORE spine;
     class ATTACK,GRAPH,NARR,RUN,LIN2,YARA,SIGMA,OPT,COV,REPORT,STREAM,EXPORT,COPILOT consumer;
 ```
@@ -237,7 +239,9 @@ flowchart TB
    (MZ+verified PE signature, ELF, Mach-O, LNK CLSID, `%PDF`, `<?php`, shebang,
    VBScript/HTA, OLE, OOXML/JAR/APK ZIP markers, …) selects which analyzer tags fire.
 2. **Static analyzers** run unconditionally. Built-in analyzers never launch the
-   sample in the controller process.
+   sample in the controller process. With Capstone installed, PE/ELF entry-point
+   traversal emits functions, basic blocks, direct calls, and exact file/RVA/VA
+   locations; without it, the rest of static analysis continues normally.
 3. **Sandbox backend** (`sandbox/base.py`) — an explicitly configured external
    backend owns submission, execution, collection, and worker teardown. Without
    one, the run remains static-only. CAPE is the first live backend.
@@ -317,6 +321,7 @@ Built on the evidence spine without core rewrites. Each is independently tested.
 | **12** | **Similarity hashing** | imphash (PE import profile) + fuzzy file MinHash emitted as evidence; lineage links samples by behaviour **or** byte-similarity **or** shared import profile — so a recompiled variant that diverges behaviourally still surfaces as a near-duplicate. | `sandworm lineage` |
 | **13** | **Export engine** | STIX 2.1, MISP event, OpenIOC 1.1, ATT&CK Navigator layer (confidence as heat score), SARIF, CSV, findings JSON — each a pure consumer of the evidence store, ingestible by TIPs / MISP / code-scanning dashboards. | `analyze --stix/--misp/…` |
 | **14** | **Batch + CI gating** | Analyse a directory into one JSON/SARIF report with a per-sample risk table and verdict-based exit codes — wire SANDWORM into a quarantine or CI pipeline. | `sandworm batch <dir> --fail-on High` |
+| **15** | **Address-aware disassembly** | Bounded Capstone traversal from PE/ELF entry points discovers reachable functions, basic-block boundaries, and direct call edges. Every finding retains file offset, RVA/VA, section, function, and instruction address through reports and the reasoning graph. | `analyze` any native PE/ELF |
 | **2** | **Temporal timeline** | Reconstructs *when* events happened (relative offsets) into an SVG strip + `T+offset` event log with absolute clock time. Static-only stays "pending" rather than inventing timing. | bound replay (see quickstart) |
 | **3** | **Cross-sample lineage** | MinHash/LSH over behavioural tokens **plus imphash + fuzzy byte-similarity** across a JSON corpus of persisted runs: nearest neighbours by behaviour / bytes / import profile, technique/IOC diff, "which sample first introduced this C2". Offline; no Neo4j required. | `sandworm lineage` |
 | **4** | **Deep memory forensics** | Hidden processes (psscan∖pslist → T1014), in-memory API hooks (→ T1056.004 / T1055), and config carved from the heap — turning *"can encrypt"* into the observed event *"did encrypt 417 files"* (T1486 observed). | bound replay |
@@ -451,7 +456,7 @@ packer layer-1 recovery (`.[emulate]`), **AES-256** sample-at-rest crypto
 
 ```bash
 pip install -e ".[dev]"
-ruff check sandworm tests && mypy sandworm && pytest      # 209 passing, fully offline
+ruff check sandworm tests && mypy sandworm && pytest      # fully offline
 ```
 
 CI (`.github/workflows/ci.yml`) runs ruff + mypy + pytest fully offline, no secrets.

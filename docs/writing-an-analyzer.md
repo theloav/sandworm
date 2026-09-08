@@ -73,13 +73,14 @@ sandworm plugins --dir path/to/plugins
 | Field | Use |
 |-------|-----|
 | `source` | `"<lane>.<format>"`, e.g. `static.elf`, `dynamic.php`, `memory.vol3` |
-| `artifact` | `process` / `file` / `registry` / `network` / `api_call` / `string` / `module` / `macro` / `thread` / `callback` |
-| `operation` | `create` / `write` / `read` / `connect` / `inject` / `spawn` / `decode` / `resolve` / `exec` |
+| `artifact` | `process` / `file` / `registry` / `network` / `api_call` / `string` / `module` / `function` / `call` / `macro` / `thread` / `callback` |
+| `operation` | `create` / `write` / `read` / `connect` / `inject` / `spawn` / `decode` / `resolve` / `exec` / `call` |
 | `subject` | who acted (process name/pid, or `{"analyzer": self.name}`) |
 | `object` | what was acted on (path/key/host/sink/...) |
 | `details` | free-form; put the **why** and `false_positive_risk` here |
 | `confidence` | calibrated 0–1 (see `interpreting-confidence.md`) |
 | `evidence_refs` | pointers to raw artifacts (`sample:<sha>`, `layer:N`, log offsets) |
+| `locations` | typed `EvidenceLocation`s for exact file offsets, RVAs/VAs, functions, instructions, PIDs, or event IDs |
 
 The ATT&CK mapper, graph, detections and copilot all read these fields, so naming
 your `object` keys conventionally (`sink`, `host`, `path`, `key`, `import`) makes

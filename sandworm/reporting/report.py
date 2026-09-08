@@ -402,13 +402,13 @@ _TEMPLATE = """<!DOCTYPE html>
 <section id="appendix">
  <h2>Evidence appendix <span class="muted">(every claim above is auditable here)</span></h2>
  <details {{ 'open' if appendix|length <= 10 else '' }}><summary>{{ appendix|length }} evidence item(s) — click an evidence id above to jump here</summary>
- <table><tr><th>ID</th><th>Source</th><th>Standing</th><th class="conf">Conf</th><th>Observation</th><th>Raw refs</th></tr>
+ <table><tr><th>ID</th><th>Source</th><th>Standing</th><th class="conf">Conf</th><th>Observation</th><th>Locations / refs</th></tr>
  {% for e in appendix %}
  <tr id="{{ e.id }}"><td class="muted">{{ e.id }}</td><td class="muted">{{ e.source }}</td>
      <td>{{ badge(e.status) }}</td>
      <td class="{{ conf_class(e.confidence) }}">{{ '%.2f'|format(e.confidence) }}</td>
      <td>{{ e.summary }}</td>
-     <td class="muted">{{ e.refs }}<br><span class="muted">{{ e.ts }}</span></td></tr>
+     <td class="muted">{% for loc in e.locations %}<code>{{ loc }}</code><br>{% endfor %}{{ e.refs }}<br><span class="muted">{{ e.ts }}</span></td></tr>
  {% endfor %}
  </table>
  </details>
@@ -582,7 +582,7 @@ def _collect_differential(store: EvidenceStore):
 # Reasoning-graph tiers: read left → right as Sample → evidence-entity →
 # capability → technique → detection. Evidence nodes are hidden (they back the
 # drill-down/citations but would clutter the picture).
-_TIER = {"Sample": 0, "Module": 1, "File": 1, "Host": 1, "Registry": 1, "Macro": 1,
+_TIER = {"Sample": 0, "Module": 1, "Function": 1, "File": 1, "Host": 1, "Registry": 1, "Macro": 1,
          "String": 1, "ApiCall": 1, "Process": 1, "Capability": 2, "Technique": 3, "Detection": 4}
 _TIER_LABELS = ["Sample", "Indicators", "Capability", "ATT&CK", "Detection"]
 # Colour reads left→right as the reasoning chain: Sample (amber) → Indicators
@@ -592,6 +592,7 @@ _IND_BLUE = "#58a6ff"
 _COLORS = {
     "Sample": "#e3b341",
     "Process": _IND_BLUE, "File": _IND_BLUE, "Registry": _IND_BLUE, "Module": _IND_BLUE,
+    "Function": _IND_BLUE,
     "Macro": _IND_BLUE, "ApiCall": _IND_BLUE, "String": _IND_BLUE,
     "Host": "#f85149",
     "Capability": "#bc8cff", "Technique": "#f0883e", "Detection": "#3fb950",
@@ -701,6 +702,7 @@ def _build_appendix(store: EvidenceStore):
                 "confidence": it.confidence,
                 "summary": _evidence_summary(it),
                 "refs": ", ".join(it.evidence_refs) or "—",
+                "locations": [location.label() for location in it.locations],
                 "ts": str(it.ts),
             })
         )

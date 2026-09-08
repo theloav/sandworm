@@ -12,13 +12,19 @@ _PF_X, _PF_W = 0x1, 0x2
 _PT_LOAD, _PT_GNU_STACK, _PT_INTERP = 1, 0x6474E551, 3
 
 
-def _elf64(segments: list[tuple[int, int]], *, e_type: int = 2, with_symtab: bool = False) -> bytes:
+def _elf64(
+    segments: list[tuple[int, int]],
+    *,
+    e_type: int = 2,
+    with_symtab: bool = False,
+    entry: int = 0,
+) -> bytes:
     """Build a minimal valid 64-bit LE ELF with the given (p_type, p_flags) PHs."""
     e_phoff = 0x40
     e_phentsize = 56
     hdr = b"\x7fELF" + bytes([2, 1, 1]) + b"\x00" * 9
     hdr += struct.pack("<HHI", e_type, 0x3E, 1)
-    hdr += struct.pack("<QQQ", 0, e_phoff, 0)
+    hdr += struct.pack("<QQQ", entry, e_phoff, 0)
     hdr += struct.pack("<IHHHHHH", 0, 64, e_phentsize, len(segments), 0, 0, 0)
     phs = b"".join(
         struct.pack("<IIQQQQQQ", ptype, flags, 0, 0, 0, 0, 0, 0) for ptype, flags in segments
@@ -36,6 +42,8 @@ def test_parse_basic_fields():
     h = parse_elf_headers(_elf64([(_PT_LOAD, _PF_X)], e_type=3, with_symtab=True))
     assert h["bits"] == 64 and h["endian"] == "little"
     assert h["type"] == 3  # DYN (PIE)
+    assert h["machine"] == 0x3E
+    assert h["entry_va"] == 0
     assert h["stripped"] is False
 
 

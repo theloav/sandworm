@@ -90,6 +90,7 @@ def register_builtins() -> AnalyzerRegistry:
     from .static import (  # noqa: F401
         common,
         decode,
+        disasm,
         elf,
         fingerprint,
         lnk,
@@ -101,7 +102,7 @@ def register_builtins() -> AnalyzerRegistry:
         unpack,
     )
 
-    for mod in (common, php, script, pe, elf, office, unpack, decode, fingerprint, lnk, pdf):
+    for mod in (common, php, script, pe, elf, office, unpack, decode, disasm, fingerprint, lnk, pdf):
         reg = getattr(mod, "register", None)
         if reg is not None:
             reg(REGISTRY)

@@ -16,19 +16,69 @@ from collections.abc import Iterable, Iterator
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 # Controlled vocabularies. Kept permissive (str fallbacks are allowed via the
 # Literal-or-str unions below) so new analyzers/plugins are not blocked, while
 # still documenting the canonical values the rest of the pipeline understands.
 Artifact = Literal[
     "process", "file", "registry", "network", "api_call", "string",
-    "thread", "module", "macro", "callback",
+    "thread", "module", "function", "call", "macro", "callback",
 ]
 Operation = Literal[
     "create", "write", "read", "connect", "inject", "spawn",
-    "decode", "resolve", "exec",
+    "decode", "resolve", "exec", "call",
 ]
+
+
+class EvidenceLocation(BaseModel):
+    """A machine-readable location in a file, image, process, or raw artifact.
+
+    Fields may be combined: a PE instruction commonly carries file offset, RVA,
+    VA, section, function, and instruction address at once. This replaces
+    ambiguous location strings while ``evidence_refs`` remains for compatibility.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    file_offset: int | None = Field(default=None, ge=0)
+    rva: int | None = Field(default=None, ge=0)
+    virtual_address: int | None = Field(default=None, ge=0)
+    section: str | None = None
+    function: str | None = None
+    basic_block: int | None = Field(default=None, ge=0)
+    instruction_address: int | None = Field(default=None, ge=0)
+    size: int | None = Field(default=None, ge=0)
+    pid: int | None = Field(default=None, ge=0)
+    event_id: str | None = None
+    artifact_sha256: str | None = Field(default=None, pattern=r"^[a-fA-F0-9]{64}$")
+
+    @model_validator(mode="after")
+    def _not_empty(self) -> EvidenceLocation:
+        if not any(value is not None for value in self.model_dump().values()):
+            raise ValueError("an evidence location must identify at least one coordinate")
+        return self
+
+    def label(self) -> str:
+        """Compact analyst-facing representation, retaining exact coordinates."""
+        parts: list[str] = []
+        if self.section:
+            parts.append(self.section)
+        if self.function:
+            parts.append(self.function)
+        if self.file_offset is not None:
+            parts.append(f"file+0x{self.file_offset:x}")
+        if self.rva is not None:
+            parts.append(f"RVA 0x{self.rva:x}")
+        if self.virtual_address is not None:
+            parts.append(f"VA 0x{self.virtual_address:x}")
+        if self.instruction_address is not None:
+            parts.append(f"insn 0x{self.instruction_address:x}")
+        if self.pid is not None:
+            parts.append(f"pid {self.pid}")
+        if self.event_id:
+            parts.append(f"event {self.event_id}")
+        return " · ".join(parts) or "artifact location"
 
 
 class EvidenceItem(BaseModel):
@@ -54,6 +104,7 @@ class EvidenceItem(BaseModel):
     details: dict[str, Any] = Field(default_factory=dict, description="format-specific free-form")
     confidence: float = Field(..., ge=0.0, le=1.0, description="0..1 — REQUIRED")
     evidence_refs: list[str] = Field(default_factory=list)
+    locations: list[EvidenceLocation] = Field(default_factory=list)
 
     @field_validator("confidence")
     @classmethod
@@ -75,6 +126,7 @@ class EvidenceItem(BaseModel):
                 "subject": self.subject,
                 "object": self.object,
                 "details": self.details,
+                "locations": [location.model_dump() for location in self.locations],
             },
             sort_keys=True,
             default=str,

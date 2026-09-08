@@ -10,8 +10,8 @@ jobs:
     runs-on: ubuntu-latest
     # Fully offline: no secrets, no network-dependent backends. The optional
     # heavy backends (lief, neo4j, volatility3, capa, oletools) are intentionally
-    # NOT installed — the pipeline degrades gracefully and the synthetic demos +
-    # tests must pass without them.
+    # NOT installed. Capstone is included as a bounded static-analysis test
+    # dependency; the runtime still degrades safely when it is absent.
     steps:
       - uses: actions/checkout@v4
 
