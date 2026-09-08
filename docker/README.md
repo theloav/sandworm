@@ -1,24 +1,17 @@
-# `docker/` — isolated detonation environments
+# `docker/` — development support only
 
-`docker-compose.yml` brings up:
+This Compose stack starts a simulated-network responder for harmless integration
+fixtures. It is **not a malware containment boundary** and SANDWORM will not
+execute samples in these containers.
 
-* **`simnet`** — a simulated-network responder (INetSim/FakeNet-style) at
-  `10.0.0.1`. All sample egress is answered here; nothing reaches a real host.
-* **`php_runner` / `linux_runner`** — locked-down, **internal-network-only**
-  detonation containers carrying the `SANDWORM_ISOLATED=1` marker that
-  `core/isolation.py` verifies before allowing any detonation.
+Use a separately managed CAPE deployment for Windows dynamic analysis. A future
+Linux backend should use disposable microVMs with an attested image, explicit
+network policy, artifact collection, and guaranteed teardown.
 
 ```bash
-docker compose up -d        # start the isolated lab
-docker compose down -v      # tear down (do this per run — environments are ephemeral)
+docker compose up -d simnet
+docker compose down -v
 ```
 
-The `internal: true` network is the load-bearing control: it removes any route to
-a real network. Replace the placeholder runner images with hardened images
-(read-only rootfs, dropped capabilities, seccomp) for production use, and point the
-Windows lane at your existing CAPE/DRAKVUF instance.
-
-`rules.yar` is the bundled YARA ruleset used by the common static analyzer when the
-`yara` Python module is installed.
-
-> Read `../docs/handling-real-samples.md` before detonating anything real.
+`rules.yar` is the bundled static-analysis ruleset used when the `yara` Python
+module is installed.

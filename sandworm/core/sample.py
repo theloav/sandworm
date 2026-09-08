@@ -12,8 +12,6 @@ Safe-handling rules enforced here, not just documented:
 from __future__ import annotations
 
 import hashlib
-import io
-import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -22,6 +20,10 @@ from .config import Config, get_config
 
 class SampleTooLargeError(ValueError):
     """Raised when a sample exceeds ``Config.max_sample_bytes``."""
+
+
+class SampleEncryptionUnavailableError(RuntimeError):
+    """Raised when encrypted sample storage is requested without AES support."""
 
 
 def sha256_bytes(data: bytes) -> str:
@@ -88,12 +90,10 @@ def _pyzipper():
 class SampleStore:
     """Encrypted-at-rest sample storage.
 
-    Strong by default when ``pyzipper`` is installed: samples are written to a
-    **AES-256** WinZip archive. Without pyzipper it degrades to a stdlib
-    password-marked ZIP — still a *defang* (non-executable inner name, isolated
-    dir, no raw bytes on a shared path) but not strong crypto. The
-    :attr:`encryption` property reports which mode is active so callers/tests can
-    assert on it. Install with ``pip install '.[secure]'`` for AES.
+    Samples are written to an AES-256 WinZip archive. Storage fails closed when
+    ``pyzipper`` is unavailable: a plaintext ZIP is not encrypted-at-rest and
+    must never be silently presented as one. Install with
+    ``pip install '.[secure]'`` to enable the store.
     """
 
     def __init__(self, config: Config | None = None) -> None:
@@ -102,8 +102,8 @@ class SampleStore:
 
     @property
     def encryption(self) -> str:
-        """'aes-256' when pyzipper is available, else 'zipcrypto-defang'."""
-        return "aes-256" if _pyzipper() is not None else "zipcrypto-defang"
+        """Return the configured at-rest encryption, or ``unavailable``."""
+        return "aes-256" if _pyzipper() is not None else "unavailable"
 
     def _archive_path(self, sha256: str) -> Path:
         return self.config.sample_dir / f"{sha256}.zip"
@@ -115,18 +115,15 @@ class SampleStore:
         path = self._archive_path(sample.sha256)
         inner = f"{sample.sha256}.bin"
         pz = _pyzipper()
-        if pz is not None:  # pragma: no cover - requires optional dep
-            with pz.AESZipFile(str(path), "w", compression=pz.ZIP_DEFLATED,
-                               encryption=pz.WZ_AES) as zf:
-                zf.setpassword(self.password)
-                zf.writestr(inner, sample.data)
-            return path
-        # Fallback: stdlib cannot write an encrypted entry; the non-executable
-        # naming and isolated dir are the load-bearing defang here.
-        buf = io.BytesIO()
-        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        if pz is None:
+            raise SampleEncryptionUnavailableError(
+                "encrypted sample storage requires pyzipper; install SANDWORM with the "
+                "'secure' extra (pip install '.[secure]')"
+            )
+        with pz.AESZipFile(str(path), "w", compression=pz.ZIP_DEFLATED,
+                           encryption=pz.WZ_AES) as zf:  # pragma: no cover - optional dep
+            zf.setpassword(self.password)
             zf.writestr(inner, sample.data)
-        path.write_bytes(buf.getvalue())
         return path
 
     def load(self, sha256: str, original_name: str | None = None) -> Sample:
@@ -134,17 +131,13 @@ class SampleStore:
         if not path.exists():
             raise FileNotFoundError(f"No stored sample for {sha256}")
         pz = _pyzipper()
-        if pz is not None:  # pragma: no cover - requires optional dep
-            with pz.AESZipFile(str(path)) as zf:
-                zf.setpassword(self.password)
-                data = zf.read(zf.namelist()[0])
-            s = Sample.from_bytes(original_name or f"{sha256}.bin", data)
-            return s
-        with zipfile.ZipFile(path) as zf:
-            inner = zf.namelist()[0]
-            try:
-                data = zf.read(inner, pwd=self.password)
-            except RuntimeError:
-                data = zf.read(inner)
+        if pz is None:
+            raise SampleEncryptionUnavailableError(
+                "encrypted sample storage requires pyzipper; install SANDWORM with the "
+                "'secure' extra (pip install '.[secure]')"
+            )
+        with pz.AESZipFile(str(path)) as zf:  # pragma: no cover - optional dep
+            zf.setpassword(self.password)
+            data = zf.read(zf.namelist()[0])
         s = Sample.from_bytes(original_name or f"{sha256}.bin", data)
         return s

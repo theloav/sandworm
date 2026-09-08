@@ -13,7 +13,17 @@ from sandworm.core.config import Config, set_config
 @pytest.fixture(autouse=True)
 def temp_config(tmp_path, monkeypatch) -> Config:
     # Ensure no ambient env leaks detonation permission into tests.
-    for var in ("SANDWORM_ALLOW_DETONATION", "SANDWORM_ISOLATED", "SANDWORM_NEO4J_URI"):
+    for var in (
+        "SANDWORM_ALLOW_DETONATION",
+        "SANDWORM_ISOLATED",
+        "SANDWORM_NEO4J_URI",
+        "SANDWORM_CAPE_URL",
+        "SANDWORM_CAPE_TOKEN",
+        "SANDWORM_CAPE_IMAGE_ID",
+        "SANDWORM_CAPE_ISOLATION_VERIFIED",
+        "SANDWORM_CAPE_ALLOW_HTTP",
+        "SANDWORM_CAPE_SIMULATED_ROUTE",
+    ):
         monkeypatch.delenv(var, raising=False)
     cfg = Config(work_dir=tmp_path / "work", allow_detonation=False, llm_provider="mock")
     set_config(cfg)

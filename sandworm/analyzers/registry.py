@@ -106,14 +106,7 @@ def register_builtins() -> AnalyzerRegistry:
         if reg is not None:
             reg(REGISTRY)
 
-    # Dynamic analyzers (gated). Import defensively.
-    try:
-        from .dynamic import linux_sandbox, php_runtime, script_runtime, windows_cape  # noqa: F401
-
-        for mod in (php_runtime, script_runtime, windows_cape, linux_sandbox):
-            reg = getattr(mod, "register", None)
-            if reg is not None:
-                reg(REGISTRY)
-    except Exception:
-        pass
+    # Dynamic execution is deliberately not registered here. The controller
+    # submits samples through ``SandboxBackend`` and only normalizes the inert
+    # artifacts it receives; analyzers never launch sample bytes in-process.
     return REGISTRY

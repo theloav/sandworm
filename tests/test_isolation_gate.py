@@ -31,25 +31,24 @@ def test_refusal_is_audited(temp_config):
     assert any(r["action"] == "detonation_refused" for r in records)
 
 
-def test_dynamic_analyzer_not_selected_without_isolation(temp_config):
-    """A dynamic analyzer must not be dispatched when the gate is closed."""
+def test_dynamic_analyzers_are_never_registered_in_process(temp_config):
+    """The controller registry contains only inert/static analyzers."""
     from sandworm.analyzers.registry import register_builtins
 
     reg = register_builtins()
     selected = reg.for_format("php", include_dynamic=True, isolated=False)
     assert all(not a.requires_isolation for a in selected)
-    # And with isolation it WOULD be selected:
+    # An environment-controlled boolean must not change that decision.
     selected_iso = reg.for_format("php", include_dynamic=True, isolated=True)
-    assert any(a.requires_isolation for a in selected_iso)
+    assert all(not a.requires_isolation for a in selected_iso)
 
 
-def test_positive_isolation_path(temp_config, monkeypatch):
-    """When all checks pass, the gate opens (and is audited)."""
+def test_legacy_marker_cannot_authorize_execution(temp_config, monkeypatch):
+    """An attacker-controlled environment marker is not an isolation proof."""
     monkeypatch.setenv(temp_config.isolation_marker_env, "1")
     temp_config.allow_detonation = True
-    monkeypatch.setattr("sandworm.core.isolation._real_network_reachable", lambda timeout=0.4: False)
-    status = require_isolation("run3", config=temp_config)
-    assert status.isolated
+    with pytest.raises(IsolationError, match="SandboxBackend"):
+        require_isolation("run3", config=temp_config)
 
 
 def test_no_execution_on_refusal(temp_config, monkeypatch):

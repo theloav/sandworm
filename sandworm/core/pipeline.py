@@ -1,15 +1,17 @@
 """End-to-end orchestration.
 
-Routes a sample through triage -> static analyzers (always) -> dynamic analyzers
-(only behind the verified isolation gate) -> reconstruction (graph, timeline,
-narrative, ATT&CK) -> detection generation -> coverage. Everything flows through
-the EvidenceStore; consumers never touch analyzers directly.
+Routes a sample through triage -> static analyzers (always) -> a configured
+sandbox backend (optional) -> artifact normalization -> reconstruction (graph,
+timeline, narrative, ATT&CK) -> detection generation -> coverage. Everything
+flows through the EvidenceStore; the controller never executes sample bytes.
 """
 
 from __future__ import annotations
 
+import json
 import uuid
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 
 from ..analyzers.base import Context
@@ -21,10 +23,11 @@ from ..reconstruct.graph import add_detections_to_graph, build_graph, graph_summ
 from ..reconstruct.narrative import Phase, build_narrative
 from ..reconstruct.timeline import TimelineEntry, build_timeline
 from ..reporting.coverage import CoverageReport, compute_coverage
+from ..sandbox.base import AnalysisPolicy, Artifact, ArtifactBundle, SandboxBackend
+from ..sandbox.replay import ReplayBackend
 from .audit import AuditLogger
 from .config import Config, get_config
 from .evidence import EvidenceStore
-from .isolation import IsolationError, guard_detonation
 from .sample import Sample
 from .triage import TriageResult, analyzer_tags_for, identify
 
@@ -45,6 +48,9 @@ class RunResult:
     graph: object = None
     analyzers_run: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    execution_mode: str = "static"
+    sandbox_backend: str | None = None
+    artifact_bundle: ArtifactBundle | None = None
 
 
 def _report_target_hash(report: object) -> str | None:
@@ -73,11 +79,10 @@ def _ingest_recorded_reports(
     """Ingest recorded dynamic/memory reports into the evidence store.
 
     Replaying a *recorded* report is NOT detonation — it transforms evidence a
-    prior, properly-isolated run already produced and executes nothing. So this
-    path deliberately does not pass through the isolation gate; it is as safe as
-    static analysis and runs offline. (Live detonation stays gated in the
-    registry.) The resulting ``dynamic.*``/``memory.*`` evidence automatically
-    upgrades technique standing inferred → observed downstream.
+    prior, properly-isolated run already produced and executes nothing. Live
+    execution is owned by a SandboxBackend, never by this normalizer. The
+    resulting ``dynamic.*``/``memory.*`` evidence automatically upgrades
+    technique standing inferred → observed downstream.
 
     Two provenance gates protect accuracy — a recorded run is only this sample's
     behaviour if it was *captured from this sample*:
@@ -100,7 +105,12 @@ def _ingest_recorded_reports(
     win_report_ok = sample.format_hint in {"pe", "dll"}
 
     def _ingest(path: str, kind: str, normalize, source: str, unit: str) -> None:
-        report = json.loads(Path(path).read_text())
+        report_path = Path(path)
+        if ctx.config.max_report_bytes and report_path.stat().st_size > ctx.config.max_report_bytes:
+            raise ValueError(
+                f"{kind} report exceeds the {ctx.config.max_report_bytes:,}-byte limit"
+            )
+        report = json.loads(report_path.read_text())
         if not win_report_ok:
             notes.append(
                 f"⚠ refused the recorded {kind} report: it is a Windows/PE run but this sample is "
@@ -146,6 +156,120 @@ def _cache_path(config: Config, sample: Sample) -> Path:
     return config.cache_dir / f"{sample.sha256}.jsonl"
 
 
+def _run_backend(
+    *,
+    backend: SandboxBackend,
+    policy: AnalysisPolicy,
+    sample: Sample,
+    ctx: Context,
+    store: EvidenceStore,
+    notes: list[str],
+    audit: AuditLogger,
+    run_id: str,
+) -> tuple[list[str], ArtifactBundle | None]:
+    """Submit, collect, normalize, and always release a backend job."""
+    job = None
+    bundle = None
+    ran: list[str] = []
+    try:
+        audit.log(
+            run_id=run_id,
+            action="sandbox_submit",
+            backend=backend.name,
+            sample_hash=sample.sha256,
+            policy={
+                "timeout_seconds": policy.timeout_seconds,
+                "network": policy.network,
+                "capture_memory": policy.capture_memory,
+                "platform": policy.platform,
+            },
+        )
+        job = backend.submit(sample, policy)
+        status = backend.status(job)
+        if status.state.value in {"failed", "destroyed"}:
+            raise RuntimeError(f"sandbox job {job.id} is {status.state.value}: {status.message}")
+        bundle = backend.collect(job)
+        if bundle.target_sha256.lower() != sample.sha256.lower():
+            raise RuntimeError("sandbox returned artifacts for a different sample")
+        # Re-hash immediately before parsing so a mutable path cannot silently
+        # diverge from the backend's manifest between collection and ingestion.
+        for artifact in bundle.artifacts:
+            current = Artifact.from_path(
+                artifact.kind, artifact.path, media_type=artifact.media_type
+            )
+            if current.sha256 != artifact.sha256 or current.size != artifact.size:
+                raise RuntimeError(f"sandbox artifact changed after collection: {artifact.path}")
+
+        cape = bundle.by_kind("cape_report")
+        memory = bundle.by_kind("memory_report")
+        if len(cape) > 1 or len(memory) > 1:
+            raise RuntimeError("sandbox returned multiple primary reports of the same kind")
+        staged_store = EvidenceStore()
+        staged_notes: list[str] = []
+        ran.extend(
+            _ingest_recorded_reports(
+                cape_report=str(cape[0].path) if cape else None,
+                memory_report=str(memory[0].path) if memory else None,
+                ctx=ctx,
+                sample=sample,
+                store=staged_store,
+                notes=staged_notes,
+                audit=audit,
+                run_id=run_id,
+            )
+        )
+        store.extend(staged_store)
+        notes.extend(staged_notes)
+        notes.append(
+            f"collected {len(bundle.artifacts)} artifact(s) from {backend.name} "
+            f"({bundle.execution_mode}; manifest verified)"
+        )
+        audit.log(
+            run_id=run_id,
+            action="sandbox_collect",
+            backend=backend.name,
+            job_id=job.id,
+            execution_mode=bundle.execution_mode,
+            isolation_verified=bundle.isolation_verified,
+            image_id=bundle.image_id,
+            artifacts=[
+                {"kind": artifact.kind, "sha256": artifact.sha256, "size": artifact.size}
+                for artifact in bundle.artifacts
+            ],
+        )
+    except Exception as exc:
+        notes.append(f"sandbox backend '{backend.name}' failed safely: {exc}")
+        audit.log(
+            run_id=run_id,
+            action="sandbox_error",
+            backend=backend.name,
+            sample_hash=sample.sha256,
+            error=repr(exc),
+        )
+        bundle = None
+        ran = []
+    finally:
+        if job is not None:
+            try:
+                backend.destroy(job)
+                audit.log(
+                    run_id=run_id,
+                    action="sandbox_destroy",
+                    backend=backend.name,
+                    job_id=job.id,
+                )
+            except Exception as exc:
+                notes.append(f"sandbox cleanup warning for '{backend.name}': {exc}")
+                audit.log(
+                    run_id=run_id,
+                    action="sandbox_destroy_error",
+                    backend=backend.name,
+                    job_id=job.id,
+                    error=repr(exc),
+                )
+    return ran, bundle
+
+
 def analyze_sample(
     sample: Sample,
     *,
@@ -154,6 +278,8 @@ def analyze_sample(
     enable_dynamic: bool = True,
     cape_report: str | None = None,
     memory_report: str | None = None,
+    sandbox_backend: SandboxBackend | None = None,
+    sandbox_policy: AnalysisPolicy | None = None,
     on_evidence=None,
     use_cache: bool = True,
 ) -> RunResult:
@@ -177,17 +303,24 @@ def analyze_sample(
     if not triage.supported:
         notes.append(f"format '{triage.fmt}' is recognized but not yet supported for deep analysis; running common analyzer only")
 
-    # --- Isolation gate (decides whether the dynamic lane runs at all) ---
-    isolated = False
-    if enable_dynamic:
-        try:
-            isolated = guard_detonation(run_id, config=config, audit=audit)
-        except IsolationError:
-            isolated = False
-    if not isolated:
-        notes.append("isolation NOT verified — dynamic detonation refused; static-only analysis")
+    # Recorded reports use the same artifact-bundle path as live sandboxes but
+    # never execute bytes. A live backend is only invoked when explicitly passed
+    # by the caller and dynamic analysis is enabled.
+    if sandbox_backend is not None and (cape_report or memory_report):
+        raise ValueError("pass either sandbox_backend or recorded reports, not both")
+    backend: SandboxBackend | None = None
+    if cape_report or memory_report:
+        backend = ReplayBackend(cape_report=cape_report, memory_report=memory_report)
+    elif enable_dynamic:
+        backend = sandbox_backend
 
-    ctx = Context(run_id=run_id, config=config, audit=audit, isolated=isolated)
+    isolated = False
+    if enable_dynamic and backend is None:
+        notes.append("no sandbox backend configured — no sample execution; static-only analysis")
+    elif not enable_dynamic and backend is None:
+        notes.append("dynamic analysis disabled — static-only analysis")
+
+    ctx = Context(run_id=run_id, config=config, audit=audit, isolated=False)
 
     analyzers_run: list[str] = []
 
@@ -197,14 +330,19 @@ def analyze_sample(
     # re-running every analyzer. Only the static path is cacheable: a live
     # detonation is non-deterministic, and a recorded-report replay depends on
     # external files, so both bypass the cache.
-    cacheable = not isolated and cape_report is None and memory_report is None
+    cacheable = backend is None
     cache_path = _cache_path(config, sample)
     cache_hit = use_cache and cacheable and cache_path.exists()
 
     if cache_hit:
         try:
             for item in EvidenceStore.load(str(cache_path)):
-                store.append(item)  # append fires the stream subscriber, if any
+                # Cached static evidence belongs to this analysis, not the run
+                # that originally populated the content-addressed cache.
+                rebound = item.model_copy(
+                    update={"run_id": run_id, "ts": datetime.now(UTC).isoformat()}
+                )
+                store.append(rebound)  # append fires the stream subscriber, if any
             analyzers_run.append("<cache>")
             notes.append(f"loaded static evidence from cache ({len(store)} items; re-analysis skipped)")
             audit.log(run_id=run_id, action="cache_hit", sample_hash=sample.sha256, evidence=len(store))
@@ -217,7 +355,9 @@ def analyze_sample(
         selected: list = []
         seen = set()
         for tag in tags:
-            for a in REGISTRY.for_format(tag, include_dynamic=enable_dynamic, isolated=isolated):
+            # Execution-capable analyzers are never dispatched in-process. The
+            # optional backend below owns detonation and returns inert artifacts.
+            for a in REGISTRY.for_format(tag, include_dynamic=False, isolated=False):
                 if a.name not in seen:
                     seen.add(a.name)
                     selected.append(a)
@@ -247,13 +387,25 @@ def analyze_sample(
             except Exception:
                 pass
 
-        # --- Recorded dynamic/memory replay (offline-safe; not a live detonation) ---
-        analyzers_run.extend(
-            _ingest_recorded_reports(
-                cape_report=cape_report, memory_report=memory_report, ctx=ctx, sample=sample,
-                store=store, notes=notes, audit=audit, run_id=run_id,
-            )
+    bundle = None
+    if backend is not None:
+        backend_ran, bundle = _run_backend(
+            backend=backend,
+            policy=sandbox_policy or AnalysisPolicy(platform=triage.fmt),
+            sample=sample,
+            ctx=ctx,
+            store=store,
+            notes=notes,
+            audit=audit,
+            run_id=run_id,
         )
+        analyzers_run.extend(backend_ran)
+        isolated = bool(
+            bundle is not None
+            and bundle.execution_mode == "sandbox"
+            and bundle.isolation_verified
+        )
+        ctx.isolated = isolated
 
     # --- Reconstruction ---
     mappings = map_evidence(store)
@@ -297,6 +449,9 @@ def analyze_sample(
         graph=graph,
         analyzers_run=analyzers_run,
         notes=notes,
+        execution_mode=bundle.execution_mode if bundle is not None else "static",
+        sandbox_backend=backend.name if backend is not None and bundle is not None else None,
+        artifact_bundle=bundle,
     )
 
 
@@ -306,8 +461,16 @@ def persist_run(result: RunResult, config: Config | None = None) -> Path:
     run_dir = config.run_dir(result.run_id)
     result.store.dump(str(run_dir / "evidence.jsonl"))
     (run_dir / "meta.txt").write_text(
-        f"sample={result.sample.name}\nsha256={result.sample.sha256}\nformat={result.triage.fmt}\nisolated={result.isolated}\n"
+        f"sample={result.sample.name}\nsha256={result.sample.sha256}\nformat={result.triage.fmt}\n"
+        f"execution_mode={result.execution_mode}\nbackend={result.sandbox_backend or ''}\n"
+        f"isolated={result.isolated}\n"
     )
+    if result.artifact_bundle is not None:
+        manifest_path = run_dir / "artifacts.json"
+        manifest_path.write_text(
+            json.dumps(result.artifact_bundle.manifest(), indent=2, sort_keys=True) + "\n"
+        )
+        manifest_path.chmod(0o600)
     return run_dir
 
 
@@ -319,7 +482,13 @@ def build_report_inputs(result: RunResult):
         sample_name=result.sample.name,
         sha256=result.sample.sha256,
         fmt=result.triage.fmt,
-        isolation="verified" if result.isolated else "not verified (static-only)",
+        isolation=(
+            f"verified sandbox ({result.sandbox_backend})"
+            if result.isolated
+            else "recorded artifact replay (no local execution)"
+            if result.execution_mode == "replay"
+            else "not configured (static-only)"
+        ),
         store=result.store,
         mappings=result.mappings,
         phases=result.phases,

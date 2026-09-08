@@ -22,29 +22,33 @@ and where the load-bearing controls live in code.
 
 | Threat | Control | Where |
 |--------|---------|-------|
-| Sample reaches a real host | Isolation gate: verify detonation env is enabled, marked isolated, and has **no** real-network reachability; else refuse + degrade to static | `core/isolation.py`, `tests/test_isolation_gate.py` |
-| Accidental execution from disk | Defang at rest: password-protected, non-executable inner name, explicit load | `core/sample.py`, `samples/README.md` |
+| Sample reaches a real host | Controller never executes samples; live submission requires an explicitly attested external backend and network policy | `sandbox/base.py`, `sandbox/cape.py`, `tests/test_sandbox_backend.py` |
+| Accidental execution from disk | AES-encrypted, non-executable archive entry; storage fails closed without AES support | `core/sample.py`, `tests/test_sample_store_aes.py` |
 | Silent/unaudited actions | JSONL audit log of every analyzer action and (refused) detonation | `core/audit.py` |
-| Propagation / persistence on host | No detonation outside the ephemeral container/VM; dynamic analyzers gated by the registry **and** the gate | `analyzers/registry.py`, `core/pipeline.py` |
+| Propagation / persistence on host | Execution-capable analyzers are not registered in-process; backend jobs are released even after collection failure | `analyzers/registry.py`, `core/pipeline.py` |
 | Prompt injection of the copilot | Sanitize + delimiter-defang all sample-controlled text; copilot answers only from retrieved subgraph and abstains otherwise | `copilot/sanitize.py`, `copilot/graphrag.py`, `tests/test_copilot_grounding.py` |
 | Analyzer crash takes down a run | Analyzers are sandboxed in `BaseAnalyzer.analyze`; errors are audited, not fatal | `analyzers/base.py` |
 
 ## Trust boundaries
 
 ```
-[ host ] ── refuses ──▶ [ detonation env: container/VM, no real net ] ──▶ [ FakeNet/INetSim ]
-   ▲                                                                       (simulated only)
-   └── EvidenceStore / report (read-only consumption of normalized evidence)
+[ controller ] ── submit ──▶ [ external sandbox backend ] ──▶ [ disposable VM ]
+      ▲                              │                              │
+      └──── hashed artifact bundle ◀─┴──────────────────────────────┘
+      │
+      └── EvidenceStore / report (normalization and read-only consumption)
 ```
 
-* Producers (analyzers) write only `EvidenceItem`s.
+* Static producers write only `EvidenceItem`s and do not execute samples.
+* Dynamic backends return content-hashed artifacts bound to the submitted hash.
 * Consumers read only from the store — they never invoke analyzers or touch the
   sample bytes directly.
 
 ## Explicit non-goals (v1)
 
-* We do not provide strong cryptographic at-rest protection (the ZIP store is a
-  defang). Use AES (pyzipper/7z) for engagements.
 * We do not build hypervisor instrumentation; we integrate CAPE/DRAKVUF.
+* `SANDWORM_CAPE_ISOLATION_VERIFIED` is deployment attestation supplied by the
+  operator; SANDWORM cannot prove a remote hypervisor's containment from inside
+  the controller.
 * We do not guarantee detection of VM-aware malware that fully no-ops; the
   differential lane (`enrich/differential.py`) only *surfaces* such behavior.

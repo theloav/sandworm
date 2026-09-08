@@ -12,7 +12,8 @@ from dataclasses import dataclass
 from html import escape
 from pathlib import Path
 
-from jinja2 import Environment
+from jinja2 import Environment, select_autoescape
+from markupsafe import Markup
 
 from ..core.evidence import EvidenceStore
 from ..detect.sigma_gen import SigmaRule
@@ -33,6 +34,7 @@ except Exception:  # pragma: no cover - logo asset optional
 
 _TEMPLATE = """<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; object-src 'none'; base-uri 'none'; form-action 'none'">
 <title>SANDWORM report — {{ sample_name }}</title>
 <style>
  :root{--bg:#0d1117;--panel:#161b22;--panel2:#1c2230;--line:#30363d;--fg:#c9d1d9;--fg2:#e6edf3;--mut:#8b949e;--acc:#1f6feb}
@@ -448,12 +450,12 @@ def _collect_layers(store: EvidenceStore):
                     "depth": it.object.get("layer"),
                     "function": it.object.get("function"),
                     "wrapper": it.details.get("wrapper", ""),
-                    "after": escape(str(it.details.get("decoded_preview", ""))),
+                    "after": str(it.details.get("decoded_preview", "")),
                     "after_len": it.details.get("decoded_len", 0),
                 }
             )
         if it.object.get("artifact") == "deobfuscated_payload":
-            final = escape(str(it.details.get("final_payload_preview", "")))
+            final = str(it.details.get("final_payload_preview", ""))
     layers.sort(key=lambda x: x["depth"] if isinstance(x["depth"], int) else 0)
     return layers, final
 
@@ -465,7 +467,7 @@ def _collect_iocs(store: EvidenceStore):
             out.append(
                 type("IOC", (), {
                     "kind": it.object.get("kind"),
-                    "value": escape(str(it.object.get("value"))),
+                    "value": str(it.object.get("value")),
                     "confidence": it.confidence,
                     "fp_risk": it.details.get("false_positive_risk", "?"),
                 })
@@ -476,7 +478,7 @@ def _collect_iocs(store: EvidenceStore):
 def _collect_library(store: EvidenceStore):
     """Benign toolchain/SDK references, kept OUT of the IOC list (reviewer ask:
     separate library artifacts from network IOCs)."""
-    return [escape(str(it.object.get("library_artifact"))) for it in store if it.details.get("library_artifact")]
+    return [str(it.object.get("library_artifact")) for it in store if it.details.get("library_artifact")]
 
 
 def _evidence_classes(store: EvidenceStore, mappings) -> list[tuple[str, int]]:
@@ -567,11 +569,11 @@ def _collect_differential(store: EvidenceStore):
             conds = it.object.get("conditions", ["A", "B"])
             out.append(
                 type("Diff", (), {
-                    "condition_a": escape(str(conds[0])),
-                    "condition_b": escape(str(conds[1] if len(conds) > 1 else "?")),
-                    "note": escape(str(it.details.get("note", ""))),
-                    "only_in_a": [escape(str(x)) for x in it.details.get("only_in_a", [])],
-                    "only_in_b": [escape(str(x)) for x in it.details.get("only_in_b", [])],
+                    "condition_a": str(conds[0]),
+                    "condition_b": str(conds[1] if len(conds) > 1 else "?"),
+                    "note": str(it.details.get("note", "")),
+                    "only_in_a": [str(x) for x in it.details.get("only_in_a", [])],
+                    "only_in_b": [str(x) for x in it.details.get("only_in_b", [])],
                 })
             )
     return out
@@ -670,20 +672,20 @@ def _graph_svg(graph, max_per_tier: int = 12) -> tuple[str, str]:
 _BADGE = {"observed": "b-obs", "inferred": "b-inf", "speculative": "b-spec"}
 
 
-def _badge(status: str) -> str:
+def _badge(status: str) -> Markup:
     cls = _BADGE.get(status, "b-spec")
-    return f'<span class="badge {cls}">{escape(str(status))}</span>'
+    return Markup(f'<span class="badge {cls}">{escape(str(status))}</span>')
 
 
-def _risk_pill(risk: str) -> str:
+def _risk_pill(risk: str) -> Markup:
     safe = risk if risk in {"Critical", "High", "Medium", "Low"} else "Low"
-    return f'<span class="risk r-{safe}">{escape(str(risk))}</span>'
+    return Markup(f'<span class="risk r-{safe}">{escape(str(risk))}</span>')
 
 
 def _evidence_summary(it) -> str:
     obj = {k: v for k, v in it.object.items() if isinstance(v, (str, int, float, bool, list))}
     bits = ", ".join(f"{k}={v}" for k, v in obj.items()) or it.artifact
-    return escape(f"{it.operation} — {bits}")[:300]
+    return f"{it.operation} — {bits}"[:300]
 
 
 def _build_appendix(store: EvidenceStore):
@@ -698,8 +700,8 @@ def _build_appendix(store: EvidenceStore):
                 "status": provenance_of(it.source, it.confidence),
                 "confidence": it.confidence,
                 "summary": _evidence_summary(it),
-                "refs": escape(", ".join(it.evidence_refs) or "—"),
-                "ts": escape(str(it.ts)),
+                "refs": ", ".join(it.evidence_refs) or "—",
+                "ts": str(it.ts),
             })
         )
     return rows
@@ -730,7 +732,10 @@ def _build_assessment(summary, phases) -> tuple[str, str]:
 
 
 def render_html(inp: ReportInputs) -> str:
-    env = Environment(autoescape=False)
+    # The report contains attacker-controlled strings from samples and sandbox
+    # artifacts. Autoescape all string templates; only locally generated SVG and
+    # the small, escaped assessment fragment are explicitly marked safe below.
+    env = Environment(autoescape=select_autoescape(default_for_string=True))
     env.globals["conf_class"] = _conf_class
     env.globals["badge"] = _badge
     env.globals["risk_pill"] = _risk_pill
@@ -748,9 +753,9 @@ def render_html(inp: ReportInputs) -> str:
     runtime_mismatch = bool(runtime.observed and _win_runtime and inp.fmt not in {"pe", "dll", "unknown", "(replayed)", ""})
     proc_tree = [
         type("PT", (), {
-            "name": escape(n.name),
-            "pid": escape(n.pid),
-            "command_line": escape(n.command_line[:80]),
+            "name": n.name,
+            "pid": n.pid,
+            "command_line": n.command_line[:80],
             "indent": ("│  " * (n.depth - 1) + "└─ ") if n.depth else "",
         })
         for n in runtime.flatten()
@@ -770,7 +775,7 @@ def render_html(inp: ReportInputs) -> str:
     return tmpl.render(
         logo_uri=LOGO_DATA_URI,
         run_id=inp.run_id,
-        sample_name=escape(inp.sample_name),
+        sample_name=inp.sample_name,
         sha256=inp.sha256,
         fmt=inp.fmt,
         isolation=inp.isolation,
