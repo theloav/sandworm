@@ -51,8 +51,18 @@ sandworm analyze suspicious.exe \
   --memory-report volatility.json
 ```
 
-Each report must identify the source sample with `target_sha256`; mismatched or
-unbound reports are refused.
+Each report must identify the source sample with `target_sha256`; a native CAPE
+report's `target.file.sha256` is also accepted. Mismatched or unbound reports are
+refused.
+
+For static-to-runtime function correlation, retain CAPE's native
+`behavior.processes[].calls[]` records. Sandworm consumes the call's `caller`,
+`thread_id`, and `id` together with the process `module_path` and load base
+(`image_base`, `module_base`, or `environ.DllBase`). ASLR addresses are rebased to
+RVAs and only linked when the module hash/name identifies the analyzed sample and
+the RVA falls inside a statically decoded instruction range. Reports lacking
+those address fields still ingest normally; they simply do not claim a function
+correlation.
 
 ## Sample storage
 

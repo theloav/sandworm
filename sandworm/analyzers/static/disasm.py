@@ -93,6 +93,21 @@ class Function:
         last = self.instructions[-1]
         return last.address + last.size - self.address
 
+    @property
+    def address_ranges(self) -> tuple[tuple[Instruction, Instruction], ...]:
+        """Contiguous decoded ranges, retaining gaps between basic blocks."""
+        if not self.instructions:
+            return ()
+        ranges: list[tuple[Instruction, Instruction]] = []
+        first = previous = self.instructions[0]
+        for instruction in self.instructions[1:]:
+            if instruction.address != previous.address + previous.size:
+                ranges.append((first, previous))
+                first = instruction
+            previous = instruction
+        ranges.append((first, previous))
+        return tuple(ranges)
+
 
 @dataclass(frozen=True)
 class CallEdge:
@@ -378,6 +393,19 @@ class DisassemblyAnalyzer(BaseAnalyzer):
                         "size": function.size,
                         "instruction_count": len(function.instructions),
                         "basic_block_count": len(function.basic_blocks),
+                        "address_ranges": [
+                            {
+                                "start_va": first.address,
+                                "end_va": last.address + last.size,
+                                "start_rva": first.location.rva,
+                                "end_rva": (
+                                    last.location.rva + last.size
+                                    if last.location.rva is not None
+                                    else None
+                                ),
+                            }
+                            for first, last in function.address_ranges
+                        ],
                         "preview": [
                             {
                                 "address": hex(instruction.address),

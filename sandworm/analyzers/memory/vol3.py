@@ -15,7 +15,7 @@ import subprocess
 from collections.abc import Iterator
 from pathlib import Path
 
-from ...core.evidence import EvidenceItem
+from ...core.evidence import EvidenceItem, EvidenceLocation
 from ...core.sample import Sample
 from ..base import BaseAnalyzer, Context
 
@@ -47,6 +47,69 @@ _CRED_HOOK_APIS = (
     "lsaaplogonuser", "msvppasswordvalidate", "credread", "credenumerate",
     "cryptdecrypt", "pwdvalidate", "samiconnect", "lsalogonuser",
 )
+
+
+def _integer(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value >= 0 else None
+    if not isinstance(value, str):
+        return None
+    cleaned = value.strip().replace("`", "").replace(",", "")
+    if not cleaned:
+        return None
+    for base in (0, 16 if any(c in "abcdefABCDEF" for c in cleaned) else 10):
+        try:
+            parsed = int(cleaned, base)
+            return parsed if parsed >= 0 else None
+        except ValueError:
+            continue
+    return None
+
+
+def _row_location(row: dict, *, instruction: bool = False) -> EvidenceLocation | None:
+    address = next(
+        (
+            parsed
+            for key in (
+                "HookAddress",
+                "FunctionAddress",
+                "Address",
+                "Start VPN",
+                "Start",
+                "Offset(V)",
+            )
+            if (parsed := _integer(row.get(key))) is not None
+        ),
+        None,
+    )
+    base = next(
+        (
+            parsed
+            for key in ("ModuleBase", "ImageBase", "Base")
+            if (parsed := _integer(row.get(key))) is not None
+        ),
+        None,
+    )
+    pid = _integer(row.get("PID", row.get("pid")))
+    file_offset = _integer(row.get("FileOffset"))
+    module = row.get("HookModule") or row.get("Module") or row.get("MappedPath")
+    if all(value is None for value in (address, base, pid, file_offset, module)):
+        return None
+    digest = str(row.get("SHA256") or row.get("sha256") or "").lower()
+    if len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
+        digest = ""
+    return EvidenceLocation(
+        file_offset=file_offset,
+        rva=address - base if address is not None and base is not None and address >= base else None,
+        virtual_address=address,
+        instruction_address=address if instruction else None,
+        module=str(module) if module else None,
+        module_base=base,
+        pid=pid,
+        artifact_sha256=digest or None,
+    )
 
 
 def _section_rows(section: dict) -> list[dict]:
@@ -84,6 +147,7 @@ def _hidden_processes(sections: list[dict], ctx: Context, ref: str) -> Iterator[
                      "why": f"PID {pid} ({name}) is visible to pool-tag scanning but unlinked from the "
                             "active process list — a hidden process (DKOM rootkit indicator)"},
             confidence=0.85, evidence_refs=[ref],
+            locations=[EvidenceLocation(pid=int(pid))] if pid.isdigit() else [],
         )
 
 
@@ -104,6 +168,7 @@ def _api_hooks(section: dict, ctx: Context, ref: str) -> Iterator[EvidenceItem]:
             object={"hooked": fn, "process": proc, "hook_type": row.get("HookType", "inline")},
             details={"plugin": "windows.apihooks.ApiHooks", "attack_hint": hint, "why": why, "hook": True},
             confidence=0.82, evidence_refs=[ref],
+            locations=[location] if (location := _row_location(row, instruction=True)) else [],
         )
 
 
@@ -115,6 +180,7 @@ def _extracted_config(section: dict, ctx: Context, ref: str) -> Iterator[Evidenc
     for row in _section_rows(section):
         kind = str(row.get("kind") or row.get("type") or "").lower()
         val = row.get("value")
+        locations = [location] if (location := _row_location(row)) else []
         if kind in ("c2", "url", "domain", "ipv4", "host") and val:
             yield ctx.ev(
                 source=SOURCE, artifact="network", operation="connect",
@@ -123,6 +189,7 @@ def _extracted_config(section: dict, ctx: Context, ref: str) -> Iterator[Evidenc
                 details={"plugin": "config_extract", "ioc": True, "memory_extracted": True,
                          "why": f"C2 endpoint recovered from process memory: {val}"},
                 confidence=0.86, evidence_refs=[ref],
+                locations=locations,
             )
         elif kind in ("rsa_key", "aes_key", "key") and val:
             yield ctx.ev(
@@ -132,6 +199,7 @@ def _extracted_config(section: dict, ctx: Context, ref: str) -> Iterator[Evidenc
                 details={"plugin": "config_extract", "memory_extracted": True,
                          "why": f"encryption key material recovered from heap ({kind})"},
                 confidence=0.8, evidence_refs=[ref],
+                locations=locations,
             )
         elif kind in ("encrypted_files", "ransom") and (cnt := row.get("count")):
             ext = row.get("extension", "")
@@ -142,6 +210,7 @@ def _extracted_config(section: dict, ctx: Context, ref: str) -> Iterator[Evidenc
                 details={"plugin": "config_extract", "memory_extracted": True,
                          "why": f"{cnt} files were encrypted to '{ext}' (observed in memory) — capability confirmed as an event"},
                 confidence=0.9, evidence_refs=[ref],
+                locations=locations,
             )
 
 
@@ -182,6 +251,7 @@ def normalize_memory_report(report: list | dict, ctx: Context, ref: str) -> Iter
                 details=details,
                 confidence=0.8,
                 evidence_refs=[ref],
+                locations=[location] if (location := _row_location(row)) else [],
             )
     yield from _hidden_processes(sections, ctx, ref)
 

@@ -203,6 +203,17 @@ _TEMPLATE = """<!DOCTYPE html>
  </div>
  <p class="muted">These are recovered from the memory image — they confirm <b>events</b> (a process that hid itself, an API patched in place, the actual C2/keys/encrypted-file tally), not just capability.</p>
  {% endif %}
+ {% if address_correlations %}
+ <h3>Static ↔ runtime address correlation</h3>
+ <p class="muted">Runtime caller addresses rebased into decoded static functions. Matches require sample-module identity and a decoded instruction range; address proximity alone is rejected.</p>
+ <table><tr><th>Process</th><th>Runtime event</th><th>Static function</th><th>Basis</th><th class="conf">Conf</th><th>Address</th><th>Evidence</th></tr>
+ {% for c in address_correlations %}<tr>
+  <td>{{ c.process }}</td><td>{{ c.event }}</td><td><code>{{ c.function }}</code></td>
+  <td>{{ c.basis }}</td><td class="{{ conf_class(c.confidence) }}">{{ '%.2f'|format(c.confidence) }}</td>
+  <td><code>{{ c.address }}</code><br><span class="muted">{{ c.location }}</span></td>
+  <td><a href="#{{ c.runtime_id }}">runtime</a> · <a href="#{{ c.static_id }}">static</a></td>
+ </tr>{% endfor %}</table>
+ {% endif %}
  {% else %}
  <p class="muted">No runtime evidence for this run. The sample was not detonated (isolation not verified) and no recorded report was ingested, so these views are <b>pending</b>. They populate automatically once a dynamic/memory report is available — the section layout does not change, the cards simply fill in.</p>
  <div class="summary">
@@ -709,6 +720,51 @@ def _build_appendix(store: EvidenceStore):
     return rows
 
 
+def _collect_address_correlations(store: EvidenceStore) -> list[dict]:
+    def confidence(value: object) -> float:
+        try:
+            parsed = float(value)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return 0.0
+        return parsed if 0.0 <= parsed <= 1.0 else 0.0
+
+    rows: list[dict] = []
+    for item in store:
+        correlations = item.details.get("address_correlations")
+        if not isinstance(correlations, list):
+            continue
+        for correlation in correlations:
+            if not isinstance(correlation, dict):
+                continue
+            function = str(correlation.get("function") or "")
+            location = next(
+                (loc for loc in item.locations if loc.function == function),
+                None,
+            )
+            address = correlation.get("matched_address")
+            rows.append(
+                {
+                    "process": item.subject.get("name")
+                    or item.subject.get("process")
+                    or item.subject.get("pid")
+                    or "—",
+                    "event": correlation.get("runtime_event") or "—",
+                    "function": function or "—",
+                    "basis": str(correlation.get("match_basis") or "—").replace("_", " "),
+                    "confidence": confidence(correlation.get("confidence")),
+                    "address": (
+                        hex(address)
+                        if isinstance(address, int) and not isinstance(address, bool)
+                        else str(address or "—")
+                    ),
+                    "location": location.label() if location is not None else "—",
+                    "runtime_id": item.id,
+                    "static_id": correlation.get("static_evidence_id") or "",
+                }
+            )
+    return rows
+
+
 def _build_assessment(summary, phases) -> tuple[str, str]:
     """Generate the analyst assessment paragraph + recommended next step, phrased
     to respect epistemic standing (static-only = capabilities, not confirmation)."""
@@ -746,6 +802,7 @@ def render_html(inp: ReportInputs) -> str:
     iocs = _collect_iocs(inp.store)
     library = _collect_library(inp.store)
     differential = _collect_differential(inp.store)
+    address_correlations = _collect_address_correlations(inp.store)
     from ..reconstruct.runtime import build_runtime_view
 
     runtime = build_runtime_view(inp.store)
@@ -791,6 +848,7 @@ def render_html(inp: ReportInputs) -> str:
         iocs=iocs,
         library=library,
         differential=differential,
+        address_correlations=address_correlations,
         evidence_classes=evidence_classes,
         evidence_weights=evidence_weights,
         runtime=runtime,

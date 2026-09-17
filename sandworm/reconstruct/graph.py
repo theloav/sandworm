@@ -62,7 +62,7 @@ def _object_identity(it) -> tuple[str, dict]:
 
 def _subject_identity(it) -> tuple[str, dict] | None:
     subj = it.subject
-    for key in ("name", "pid", "function", "analyzer"):
+    for key in ("name", "pid", "process", "function", "analyzer"):
         if key in subj and subj[key] not in (None, ""):
             return str(subj[key]), {"kind": key, **{k: v for k, v in subj.items() if isinstance(v, (str, int, float, bool))}}
     return None
@@ -121,12 +121,13 @@ def build_graph(store: EvidenceStore, mappings: list[AttackMapping] | None = Non
         graph.add_edge(Edge(ev_id, obj_node_id, "ABOUT", {}))
 
         subj = _subject_identity(it)
+        subj_node_id = None
         if subj:
             subj_id, subj_props = subj
             subject_label = (
                 NODE_FUNCTION if subj_props.get("kind") == "function" else NODE_PROCESS
             )
-            if subj_props.get("kind") in {"name", "pid", "function"}:
+            if subj_props.get("kind") in {"name", "pid", "process", "function"}:
                 subj_node_id = _node_key(subject_label, subj_id)
                 graph.add_node(
                     Node(subj_node_id, subject_label, {"display": subj_id, **subj_props})
@@ -139,6 +140,32 @@ def build_graph(store: EvidenceStore, mappings: list[AttackMapping] | None = Non
                         {"confidence": it.confidence, "evidence": it.id, "ts": it.ts},
                     )
                 )
+
+        # Address correlation is embedded in the original runtime evidence so it
+        # survives persistence and graph rebuilds without derived store writes.
+        correlations = it.details.get("address_correlations")
+        if isinstance(correlations, list) and it.source.startswith(("dynamic.", "memory.")):
+            for correlation in correlations:
+                if not isinstance(correlation, dict) or not correlation.get("function"):
+                    continue
+                function = str(correlation["function"])
+                function_node_id = _node_key(NODE_FUNCTION, function)
+                graph.add_node(
+                    Node(
+                        function_node_id,
+                        NODE_FUNCTION,
+                        {"display": function, "kind": "function"},
+                    )
+                )
+                props = {
+                    "confidence": correlation.get("confidence", it.confidence),
+                    "evidence": it.id,
+                    "static_evidence": correlation.get("static_evidence_id"),
+                }
+                if subj_node_id is not None:
+                    graph.add_edge(Edge(subj_node_id, function_node_id, "OBSERVED_AT", props))
+                if function_node_id != obj_node_id:
+                    graph.add_edge(Edge(function_node_id, obj_node_id, "RUNTIME_EVENT", props))
 
     # ATT&CK technique nodes. Wire BOTH evidence→technique (citations) and the
     # backing entity→technique (the visible reasoning chain).

@@ -247,12 +247,16 @@ flowchart TB
    one, the run remains static-only. CAPE is the first live backend.
 4. **Recorded-report replay** (offline) — `--cape-report` / `--memory-report`
    ingest prior evidence; this executes nothing, so it runs without the gate. Each
-   report must declare `target_sha256` matching the sample, or it is refused (a
-   recorded run is only a file's behaviour if it was *captured from that file*).
-5. **Reconstruction** — graph, lifecycle narrative, timelines, ATT&CK mapping with
+   report must declare a matching sample hash (`target_sha256`, or native CAPE
+   `target.file.sha256`), or it is refused.
+5. **Address correlation** — native CAPE caller addresses are rebased with the
+   captured module load base and matched only against decoded instruction ranges
+   belonging to the analyzed sample. Exact function links survive in JSONL,
+   reports, and graph rebuilds.
+6. **Reconstruction** — graph, lifecycle narrative, timelines, ATT&CK mapping with
    Bayesian confidence.
-6. **Detections** — clean-tested YARA + Sigma, coverage matrix.
-7. **Report** — a single self-contained HTML file; every claim links to its
+7. **Detections** — clean-tested YARA + Sigma, coverage matrix.
+8. **Report** — a single self-contained HTML file; every claim links to its
    backing evidence.
 
 ---
@@ -322,6 +326,7 @@ Built on the evidence spine without core rewrites. Each is independently tested.
 | **13** | **Export engine** | STIX 2.1, MISP event, OpenIOC 1.1, ATT&CK Navigator layer (confidence as heat score), SARIF, CSV, findings JSON — each a pure consumer of the evidence store, ingestible by TIPs / MISP / code-scanning dashboards. | `analyze --stix/--misp/…` |
 | **14** | **Batch + CI gating** | Analyse a directory into one JSON/SARIF report with a per-sample risk table and verdict-based exit codes — wire SANDWORM into a quarantine or CI pipeline. | `sandworm batch <dir> --fail-on High` |
 | **15** | **Address-aware disassembly** | Bounded Capstone traversal from PE/ELF entry points discovers reachable functions, basic-block boundaries, and direct call edges. Every finding retains file offset, RVA/VA, section, function, and instruction address through reports and the reasoning graph. | `analyze` any native PE/ELF |
+| **16** | **Static ↔ runtime correlation** | Normalizes native CAPE per-process calls (`caller`, PID/TID, module path/load base), rebases ASLR addresses to RVAs, and links observed API events to exact decoded functions. Hash/name identity gates and decoded-range checks reject foreign modules and address gaps. | CAPE live run or bound replay |
 | **2** | **Temporal timeline** | Reconstructs *when* events happened (relative offsets) into an SVG strip + `T+offset` event log with absolute clock time. Static-only stays "pending" rather than inventing timing. | bound replay (see quickstart) |
 | **3** | **Cross-sample lineage** | MinHash/LSH over behavioural tokens **plus imphash + fuzzy byte-similarity** across a JSON corpus of persisted runs: nearest neighbours by behaviour / bytes / import profile, technique/IOC diff, "which sample first introduced this C2". Offline; no Neo4j required. | `sandworm lineage` |
 | **4** | **Deep memory forensics** | Hidden processes (psscan∖pslist → T1014), in-memory API hooks (→ T1056.004 / T1055), and config carved from the heap — turning *"can encrypt"* into the observed event *"did encrypt 417 files"* (T1486 observed). | bound replay |
@@ -332,7 +337,7 @@ Built on the evidence spine without core rewrites. Each is independently tested.
 
 > Performance: analyzers run **concurrently** (thread pool over the independent
 > lanes), byte scans are single-pass, entropy uses numpy when present, and a
-> content-addressed **static-evidence cache** makes re-analysis of the same sample
+> versioned, content-addressed **static-evidence cache** makes re-analysis of the same sample
 > instant — designed for batch/CI throughput.
 >
 > Deliberately **not** built: LLM hypothesis generation, and *live* threat-intel

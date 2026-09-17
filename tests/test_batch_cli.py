@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from typer.testing import CliRunner
 
 from sandworm.cli import app
@@ -64,3 +65,22 @@ def test_batch_fail_on_not_triggered_when_clean(tmp_path):
     result = runner.invoke(app, ["batch", str(d), "--fail-on", "Critical", "--out", str(tmp_path / "o.json")])
     assert result.exit_code == 0, result.output
     set_config(Config())
+
+
+@pytest.mark.parametrize("option,value", [
+    ("--format", "xml"), ("--fail-on", "invalid"), ("--fail-on", "Clean"),
+])
+def test_invalid_batch_options_do_not_analyze_or_overwrite(tmp_path, option, value):
+    d = _setup(tmp_path)
+    out = tmp_path / "existing.json"
+    out.write_text("keep this")
+    result = runner.invoke(app, ["batch", str(d), option, value, "--out", str(out)])
+    assert result.exit_code == 2
+    assert out.read_text() == "keep this"
+    assert not (tmp_path / "wd").exists()
+
+
+def test_analyze_rejects_directory(tmp_path):
+    result = runner.invoke(app, ["analyze", str(tmp_path)])
+    assert result.exit_code == 1
+    assert "not a file" in result.output

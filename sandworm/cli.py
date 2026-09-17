@@ -55,11 +55,11 @@ def analyze(
     """Analyze a sample end-to-end and write an HTML report."""
     cfg = get_config()
     p = Path(sample_path)
-    if not p.exists():
-        typer.secho(f"sample not found: {sample_path}", fg=typer.colors.RED)
+    if not p.is_file():
+        typer.secho(f"sample is not a file: {sample_path}", fg=typer.colors.RED)
         raise typer.Exit(1)
     for label, val in (("--cape-report", cape_report), ("--memory-report", memory_report)):
-        if val and not Path(val).exists():
+        if val and not Path(val).is_file():
             typer.secho(f"{label} not found: {val}", fg=typer.colors.RED)
             raise typer.Exit(1)
     backend = backend.strip().lower()
@@ -225,6 +225,13 @@ def batch(
     from .reporting.summary import build_summary
 
     cfg = get_config()
+    if fmt not in {"json", "sarif"}:
+        typer.secho("--format must be 'json' or 'sarif'", fg=typer.colors.RED, err=True)
+        raise typer.Exit(2)
+    gate = _RISK_ORDER.get(fail_on.capitalize()) if fail_on else None
+    if fail_on and (gate is None or fail_on.capitalize() == "Clean"):
+        typer.secho(f"invalid --fail-on '{fail_on}'", fg=typer.colors.RED, err=True)
+        raise typer.Exit(2)
     p = Path(path)
     if p.is_file():
         paths = [p]
@@ -270,11 +277,7 @@ def batch(
         typer.secho(f"  {risk:<8} {score:>3}/100  {ffmt:<10} {ntech:>2} tech  {name}", fg=color, err=True)
 
     if fail_on:
-        gate = _RISK_ORDER.get(fail_on.capitalize())
-        if gate is None:
-            typer.secho(f"invalid --fail-on '{fail_on}'", fg=typer.colors.RED, err=True)
-            raise typer.Exit(2)
-        if worst >= gate:
+        if gate is not None and worst >= gate:
             typer.secho(f"gate: a sample met/exceeded risk '{fail_on}' → exit 1", fg=typer.colors.RED, err=True)
             raise typer.Exit(1)
 

@@ -93,6 +93,13 @@ def test_unconditional_jump_target_is_traversed_as_a_basic_block():
     ]
     assert result.functions[0].basic_blocks == (0x401000, 0x401006)
 
+    items = DisassemblyAnalyzer().analyze(sample, Context(run_id="ranges"))
+    function = next(item for item in items if item.artifact == "function")
+    assert function.details["address_ranges"] == [
+        {"start_va": 0x401000, "end_va": 0x401002, "start_rva": 0x1000, "end_rva": 0x1002},
+        {"start_va": 0x401006, "end_va": 0x401007, "start_rva": 0x1006, "end_rva": 0x1007},
+    ]
+
 
 def test_elf_layout_and_discovery_preserve_virtual_address():
     sample = Sample.from_bytes("tiny.elf", _elf64(b"\xc3"), "elf")

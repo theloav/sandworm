@@ -19,6 +19,7 @@ from ..analyzers.registry import REGISTRY, register_builtins
 from ..detect.sigma_gen import SigmaRule, generate_sigma
 from ..detect.yara_gen import YaraRule, generate_yara, load_clean_corpus
 from ..reconstruct.attack_map import AttackMapping, map_evidence
+from ..reconstruct.correlation import annotate_runtime_addresses
 from ..reconstruct.graph import add_detections_to_graph, build_graph, graph_summary
 from ..reconstruct.narrative import Phase, build_narrative
 from ..reconstruct.timeline import TimelineEntry, build_timeline
@@ -30,6 +31,8 @@ from .config import Config, get_config
 from .evidence import EvidenceStore
 from .sample import Sample
 from .triage import TriageResult, analyzer_tags_for, identify
+
+_STATIC_CACHE_VERSION = 2
 
 
 @dataclass
@@ -64,7 +67,14 @@ def _report_target_hash(report: object) -> str | None:
     """
     if isinstance(report, dict):
         h = report.get("target_sha256")
-        return str(h).lower() if h else None
+        if h:
+            return str(h).lower()
+        target = report.get("target")
+        if isinstance(target, dict):
+            file_meta = target.get("file")
+            if isinstance(file_meta, dict) and file_meta.get("sha256"):
+                return str(file_meta["sha256"]).lower()
+        return None
     if isinstance(report, list):
         for section in report:
             if isinstance(section, dict) and section.get("target_sha256"):
@@ -74,7 +84,8 @@ def _report_target_hash(report: object) -> str | None:
 
 def _ingest_recorded_reports(
     *, cape_report: str | None, memory_report: str | None, ctx: Context, sample: Sample,
-    store: EvidenceStore, notes: list[str], audit: AuditLogger, run_id: str,
+    store: EvidenceStore, static_store: EvidenceStore, notes: list[str],
+    audit: AuditLogger, run_id: str,
 ) -> list[str]:
     """Ingest recorded dynamic/memory reports into the evidence store.
 
@@ -134,9 +145,15 @@ def _ingest_recorded_reports(
             )
             return
         items = list(normalize(report, ctx, ref))
+        items, correlation_count = annotate_runtime_addresses(static_store, items, sample)
         store.extend(items)
         ran.append(f"{source}(replay)")
         notes.append(f"ingested recorded {kind} report ({len(items)} {unit}; replay — no live detonation)")
+        if correlation_count:
+            notes.append(
+                f"correlated {correlation_count} {kind} instruction address(es) "
+                "to decoded static functions"
+            )
         audit.log(run_id=run_id, action=f"ingest_{kind}_report", source=source,
                   sample_hash=sample.sha256, events=len(items), path=str(path))
 
@@ -152,8 +169,8 @@ def _ingest_recorded_reports(
 
 
 def _cache_path(config: Config, sample: Sample) -> Path:
-    """Content-addressed cache file for a sample's static evidence."""
-    return config.cache_dir / f"{sample.sha256}.jsonl"
+    """Versioned, content-addressed cache for deterministic static evidence."""
+    return config.cache_dir / f"{sample.sha256}.v{_STATIC_CACHE_VERSION}.jsonl"
 
 
 def _run_backend(
@@ -213,6 +230,7 @@ def _run_backend(
                 ctx=ctx,
                 sample=sample,
                 store=staged_store,
+                static_store=store,
                 notes=staged_notes,
                 audit=audit,
                 run_id=run_id,

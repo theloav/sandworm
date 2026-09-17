@@ -46,16 +46,34 @@ class EvidenceLocation(BaseModel):
     virtual_address: int | None = Field(default=None, ge=0)
     section: str | None = None
     function: str | None = None
+    module: str | None = None
+    module_base: int | None = Field(default=None, ge=0)
     basic_block: int | None = Field(default=None, ge=0)
     instruction_address: int | None = Field(default=None, ge=0)
     size: int | None = Field(default=None, ge=0)
     pid: int | None = Field(default=None, ge=0)
+    thread_id: int | None = Field(default=None, ge=0)
     event_id: str | None = None
     artifact_sha256: str | None = Field(default=None, pattern=r"^[a-fA-F0-9]{64}$")
 
     @model_validator(mode="after")
     def _not_empty(self) -> EvidenceLocation:
-        if not any(value is not None for value in self.model_dump().values()):
+        coordinates = (
+            self.file_offset,
+            self.rva,
+            self.virtual_address,
+            self.section,
+            self.function,
+            self.module,
+            self.module_base,
+            self.basic_block,
+            self.instruction_address,
+            self.pid,
+            self.thread_id,
+            self.event_id,
+            self.artifact_sha256,
+        )
+        if not any(value not in (None, "") for value in coordinates):
             raise ValueError("an evidence location must identify at least one coordinate")
         return self
 
@@ -66,6 +84,8 @@ class EvidenceLocation(BaseModel):
             parts.append(self.section)
         if self.function:
             parts.append(self.function)
+        if self.module:
+            parts.append(self.module)
         if self.file_offset is not None:
             parts.append(f"file+0x{self.file_offset:x}")
         if self.rva is not None:
@@ -74,8 +94,12 @@ class EvidenceLocation(BaseModel):
             parts.append(f"VA 0x{self.virtual_address:x}")
         if self.instruction_address is not None:
             parts.append(f"insn 0x{self.instruction_address:x}")
+        if self.module_base is not None:
+            parts.append(f"base 0x{self.module_base:x}")
         if self.pid is not None:
             parts.append(f"pid {self.pid}")
+        if self.thread_id is not None:
+            parts.append(f"tid {self.thread_id}")
         if self.event_id:
             parts.append(f"event {self.event_id}")
         return " · ".join(parts) or "artifact location"

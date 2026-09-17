@@ -25,7 +25,7 @@ static = ["lief>=0.14", "pefile>=2023.2.7", "pyelftools>=0.30", "capstone>=5.0",
 # it is absent.
 perf = ["numpy>=1.24"]
 # AES-256 encryption-at-rest for the sample store, and emulation-assisted
-# unpacking of packed binaries. Both degrade gracefully when absent.
+# unpacking of packed binaries. Storage fails closed without the secure extra.
 secure = ["pyzipper>=0.3.6"]
 emulate = ["unicorn>=2.0", "capstone>=5.0"]
 graph = ["neo4j>=5.14"]
@@ -34,6 +34,10 @@ memory = ["volatility3>=2.5"]
 web = ["fastapi>=0.110", "uvicorn>=0.27"]
 llm = ["anthropic>=0.25", "openai>=1.30"]
 dev = ["pytest>=8.0", "ruff>=0.4", "mypy>=1.9", "numpy>=1.24", "capstone>=5.0"]
+
+[project.urls]
+Repository = "https://github.com/theloav/sandworm"
+Issues = "https://github.com/theloav/sandworm/issues"
 
 [project.scripts]
 sandworm = "sandworm.cli:app"

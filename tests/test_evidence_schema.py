@@ -39,6 +39,8 @@ def test_structured_location_requires_a_coordinate():
         EvidenceLocation()
     with pytest.raises(ValidationError):
         EvidenceLocation(file_offset=-1)
+    with pytest.raises(ValidationError):
+        EvidenceLocation(module="", size=4)
 
     location = EvidenceLocation(
         file_offset=0x240,

@@ -19,7 +19,8 @@ pip install -e ".[static]"   # lief, pefile, pyelftools, capstone, oletools
 pip install -e ".[graph]"    # neo4j driver
 pip install -e ".[memory]"   # volatility3
 pip install -e ".[llm]"      # anthropic / openai SDKs
-pip install -e ".[web]"      # fastapi + uvicorn (optional UI)
+pip install -e ".[secure]"   # AES-256 sample storage (--store)
+pip install -e ".[emulate]"  # bounded CPU emulation for unpacking
 ```
 
 ## First run (no real malware needed)
@@ -55,3 +56,17 @@ ruff check sandworm tests plugins_example
 mypy sandworm
 pytest
 ```
+
+## Build distributable packages
+
+```bash
+pip install build
+python -m build
+pip install dist/sandworm-0.1.0-py3-none-any.whl
+sandworm --help
+```
+
+The wheel provides the CLI and HTML report renderer. The source distribution
+also includes documentation and the benign demonstration corpus. There is no
+hosted web application; view generated reports in a browser. Live CAPE and
+optional Neo4j/LLM services require separate configuration and credentials.
