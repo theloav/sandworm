@@ -149,4 +149,4 @@ def test_triage_jar_and_apk_named():
     apk = b"PK\x03\x04" + b"AndroidManifest.xml" + b"classes.dex"
     assert identify(jar, "x.jar").fmt == "jar"
     r = identify(apk, "x.apk")
-    assert r.fmt == "apk" and not r.supported
+    assert r.fmt == "apk" and r.supported

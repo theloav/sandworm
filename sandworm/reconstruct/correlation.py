@@ -62,7 +62,7 @@ def _valid_range(start: object, end: object) -> tuple[int, int] | None:
 
 
 def _function_record(item: EvidenceItem) -> _FunctionRecord | None:
-    if item.source != "static.disasm" or item.artifact != "function" or not item.locations:
+    if item.source not in {"static.disasm", "static.ghidra"} or item.artifact != "function" or not item.locations:
         return None
     location = item.locations[0]
     name = str(item.object.get("function") or location.function or "")
@@ -79,6 +79,8 @@ def _function_record(item: EvidenceItem) -> _FunctionRecord | None:
                 rva_ranges.append(pair)
             if pair := _valid_range(row.get("start_va"), row.get("end_va")):
                 va_ranges.append(pair)
+    if item.source == "static.ghidra" and not rva_ranges and not va_ranges:
+        return None
     size = _integer(item.details.get("size")) or location.size or 1
     if not rva_ranges and location.rva is not None:
         rva_ranges.append((location.rva, location.rva + max(size, 1)))

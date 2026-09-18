@@ -14,6 +14,24 @@
 
 </div>
 
+**v0.2 adds an operational workspace:** authenticated browser UI/API, team roles,
+encrypted submissions, durable/cancellable jobs, recurring schedules, local and
+HTTPS remote workers, a disposable Linux QEMU backend and guest-image builder,
+Ghidra integration, offline memory-image processing, intelligence snapshots and
+graph clustering. See the [capability and validation checklist](docs/capabilities.md)
+for implemented scope and remaining research/deployment requirements.
+
+```bash
+pip install -e '.[full]'
+sandworm user-add analyst --workspace lab --role admin
+sandworm serve --local-http     # http://127.0.0.1:8000
+# In a second terminal using the same work directory/environment:
+sandworm worker
+```
+
+[Platform guide](docs/platform.md) · [Sandbox deployment](docs/sandbox-deployment.md)
+· [Advanced analysis](docs/advanced-analysis.md) · `sandworm doctor`
+
 SANDWORM is an isolated, multi-format malware reverse-engineering platform. It is
 *not* "another sandbox": every subsystem exists to serve one promise — take a
 sample, reconstruct its lifecycle from **static, dynamic, and memory** evidence,
@@ -23,7 +41,8 @@ detections (YARA + Sigma).
 It handles **PE/DLL (incl. .NET), ELF (C/Rust/Go), PHP webshells, scripts
 (PowerShell/JS/shell/VBScript/HTA), Office macros, and the phishing initial-access
 formats LNK & PDF** through a pluggable analyzer architecture — new formats are
-plugins, not core changes. (JAR/APK/Mach-O are recognised and named.)
+plugins, not core changes. JAR/APK, Mach-O and UEFI now have bounded structural
+analyzers; their depth and limitations are documented in the advanced guide.
 
 Every conclusion is **traceable to evidence**, labeled **observed vs inferred**,
 scored by a **Bayesian confidence model**, explained through a **reasoning chain**,
@@ -67,7 +86,7 @@ sandworm batch ./quarantine --format sarif --out results.sarif --fail-on High
 pip install -e ".[perf]"     # numpy — ~20x entropy on multi-MB samples
 pip install -e ".[secure]"   # pyzipper — AES-256 sample encryption at rest
 pip install -e ".[emulate]"  # unicorn + capstone — emulate packer stubs to recover unpacked code
-pip install -e ".[static]"   # lief/pefile/pyelftools/capstone/oletools/capa
+pip install -e ".[static]"   # lief/pefile/pyelftools/capstone/oletools
 ```
 
 ---
@@ -146,9 +165,9 @@ flowchart TB
         end
         subgraph DYN["DYNAMIC · external SandboxBackend"]
             CAPE[windows CAPE backend]
-            LIN[linux microVM backend · planned]
+            LIN[disposable Linux QEMU backend]
         end
-        subgraph MEM["MEMORY · offline replay"]
+        subgraph MEM["MEMORY · offline collection and replay"]
             VOL3["vol3: pslist/psscan/malfind/<br/>apihooks/config"]
         end
     end
@@ -340,9 +359,9 @@ Built on the evidence spine without core rewrites. Each is independently tested.
 > versioned, content-addressed **static-evidence cache** makes re-analysis of the same sample
 > instant — designed for batch/CI throughput.
 >
-> Deliberately **not** built: LLM hypothesis generation, and *live* threat-intel
-> enrichment (VirusTotal/MISP/passive-DNS) — live network calls conflict with the
-> offline/isolated identity. An offline-snapshot enrichment would fit; live does not.
+> Offline intelligence snapshots and separately labeled LLM hypotheses are now
+> supported. Live threat-intelligence enrichment remains excluded: no implicit
+> network lookups are made during analysis.
 
 ---
 
@@ -443,13 +462,20 @@ backend degrades gracefully — the synthetic demos and the full test suite run
 
 ## Status — what's deferred to v2 (honest list)
 
-* Hypervisor-level instrumentation / Intel-PT tracing (we *integrate* CAPE/DRAKVUF,
-  we don't build hypervisor instrumentation).
-* Live threat-intel enrichment and LLM hypothesis generation (excluded by design;
-  see above).
-* GNN graph embeddings & ML-based family clustering (today's graph + lineage are
-  rule/MinHash-built).
-* Firmware / SMM / bootkit analysis; OS coverage beyond Windows + Linux.
+* Raw Intel-PT decoding, Xen/DRAKVUF deployment and custom hypervisor/SMM
+  instrumentation. Decoded CPU traces can be imported and correlated.
+* Live threat-intel enrichment (excluded by design). Offline snapshots and
+  optional speculative LLM hypotheses are implemented.
+* Trained GNN/family-attribution models. Graph-feature DBSCAN clustering is
+  implemented, but clusters do not establish family identity.
+* Deep firmware/SMM/bootkit behavior analysis. UEFI volume/FFS inventory is
+  implemented; bootkit detection and firmware authenticity are not established.
+* Complete Android/Java decompilation, full OS/API emulation, and guaranteed
+  unpacking. Current format and emulation support is deliberately bounded.
+
+Live Windows validation requires a separately provisioned CAPE host and a licensed
+Windows guest. Container images and service units package the controller; they do
+not replace a VM boundary for sample execution.
 
 **Shipped since the first cut** (were deferred, now built): stub **emulation** for
 packer layer-1 recovery (`.[emulate]`), **AES-256** sample-at-rest crypto

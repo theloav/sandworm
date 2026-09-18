@@ -42,6 +42,10 @@ def analyze(
     ),
     cape_report: str = typer.Option("", "--cape-report", help="Ingest a recorded CAPE/DRAKVUF JSON report (offline replay; not a live detonation)."),
     memory_report: str = typer.Option("", "--memory-report", help="Ingest a recorded volatility3 JSON report (offline replay)."),
+    runtime_report: str = typer.Option("", "--runtime-report", help="Sample-bound Linux/script/decoded CPU trace JSON."),
+    profile: str = typer.Option("", "--profile", help="Operator-configured sandbox profile name."),
+    intelligence_snapshot: str = typer.Option("", "--intelligence", help="Offline intelligence snapshot JSON."),
+    decompiler_report: str = typer.Option("", "--decompiler-report", help="Sample-bound Ghidra JSON export."),
     store_sample: bool = typer.Option(False, "--store", help="Defang+store the sample encrypted-at-rest."),
     stream: bool = typer.Option(False, "--stream", help="Stream evidence live (ALERT on high-signal findings) as it is discovered."),
     no_cache: bool = typer.Option(False, "--no-cache", help="Ignore the static-evidence cache and re-run all analyzers."),
@@ -58,7 +62,7 @@ def analyze(
     if not p.is_file():
         typer.secho(f"sample is not a file: {sample_path}", fg=typer.colors.RED)
         raise typer.Exit(1)
-    for label, val in (("--cape-report", cape_report), ("--memory-report", memory_report)):
+    for label, val in (("--cape-report", cape_report), ("--memory-report", memory_report), ("--runtime-report", runtime_report), ("--intelligence", intelligence_snapshot), ("--decompiler-report", decompiler_report)):
         if val and not Path(val).is_file():
             typer.secho(f"{label} not found: {val}", fg=typer.colors.RED)
             raise typer.Exit(1)
@@ -72,9 +76,11 @@ def analyze(
     if backend and no_dynamic:
         typer.secho("--backend cannot be combined with --no-dynamic", fg=typer.colors.RED)
         raise typer.Exit(1)
-    if backend and (cape_report or memory_report):
+    if (backend or profile) and (cape_report or memory_report or runtime_report):
         typer.secho("use either --backend or recorded report replay, not both", fg=typer.colors.RED)
         raise typer.Exit(1)
+    if profile and (backend or no_dynamic):
+        raise typer.BadParameter("--profile cannot be combined with --backend or --no-dynamic")
     try:
         sample = Sample.from_path(p, cfg)
     except SampleTooLargeError as exc:
@@ -95,7 +101,8 @@ def analyze(
         feed = StreamFeed(sink=_emit)
         typer.secho("── live evidence feed ──", fg=typer.colors.CYAN)
 
-    sandbox_backend = None
+    from .sandbox.base import SandboxBackend
+    sandbox_backend: SandboxBackend | None = None
     sandbox_policy = None
     if backend == "cape":
         from .sandbox import AnalysisPolicy, CAPEBackend
@@ -124,9 +131,15 @@ def analyze(
             typer.secho(f"invalid CAPE configuration: {exc}", fg=typer.colors.RED)
             raise typer.Exit(1) from exc
 
+    if profile:
+        from .sandbox.profiles import resolve_profile
+        sandbox_backend, sandbox_policy = resolve_profile(profile, cfg)
+
     result = analyze_sample(
         sample, config=cfg, enable_dynamic=not no_dynamic,
         cape_report=cape_report or None, memory_report=memory_report or None,
+        runtime_report=runtime_report or None, intelligence_snapshot=intelligence_snapshot or None,
+        decompiler_report=decompiler_report or None,
         sandbox_backend=sandbox_backend, sandbox_policy=sandbox_policy,
         on_evidence=feed, use_cache=not no_cache,
     )
@@ -512,6 +525,10 @@ def _render_from_store(run_id: str, store: EvidenceStore, out_path: Path) -> Non
     )
     write_report(inp, out_path)
 
+
+from .platform.commands import register_commands  # noqa: E402
+
+register_commands(app)
 
 if __name__ == "__main__":
     app()

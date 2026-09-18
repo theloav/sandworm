@@ -40,11 +40,11 @@ def test_identify(data, name, expected):
     assert identify(data, name).fmt == expected
 
 
-def test_macho_recognized_but_unsupported():
+def test_macho_routes_to_structural_analyzer():
     macho = b"\xcf\xfa\xed\xfe" + b"\x00" * 64
     res = identify(macho, "bin")
     assert res.fmt == "macho"
-    assert res.supported is False
+    assert res.supported is True
 
 
 def _analyzer_names_for(fmt: str) -> set[str]:

@@ -114,7 +114,11 @@ def identify(data: bytes, name: str | None = None) -> TriageResult:
         return TriageResult(FORMAT_ELF, 0.99, reasons, supported=True)
     if head in _MACHO_MAGICS:
         reasons.append("Mach-O magic")
-        return TriageResult(FORMAT_MACHO, 0.95, reasons, supported=False)
+        return TriageResult(FORMAT_MACHO, 0.95, reasons, supported=True)
+    if b"_FVH" in data[:16 * 1024 * 1024]:
+        from ..analyzers.static.firmware import firmware_volumes
+        if firmware_volumes(data):
+            return TriageResult("firmware", 0.85, ["bounded UEFI firmware volume structure"], supported=True)
     if data[:8] == _OLE_MAGIC:
         reasons.append("OLE compound file (legacy Office)")
         return TriageResult(FORMAT_OFFICE, 0.9, reasons, supported=True)
@@ -133,10 +137,10 @@ def identify(data: bytes, name: str | None = None) -> TriageResult:
         # Name the archive type instead of silently degrading to 'generic'.
         if b"androidmanifest.xml" in lower or b"classes.dex" in lower:
             reasons.append("ZIP container with Android (APK) markers")
-            return TriageResult(FORMAT_APK, 0.85, reasons, supported=False)
+            return TriageResult(FORMAT_APK, 0.85, reasons, supported=True)
         if b"meta-inf/" in lower and (b".class" in lower or b"manifest.mf" in lower):
             reasons.append("ZIP container with Java archive (JAR) markers")
-            return TriageResult(FORMAT_JAR, 0.8, reasons, supported=False)
+            return TriageResult(FORMAT_JAR, 0.8, reasons, supported=True)
 
     # --- Text formats ---
     try:

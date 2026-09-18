@@ -44,6 +44,26 @@ jobs:
           test -s /tmp/report.html
           sandworm plugins --dir plugins_example | grep plugin.wallet
 
+  platform:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install platform and browser test dependencies
+        run: |
+          pip install -e '.[dev,web,ml,secure,emulate]' playwright
+          playwright install --with-deps chromium
+      - name: Test API, workers and browser workflows
+        env:
+          SANDWORM_BROWSER_TESTS: "1"
+        run: pytest
+      - name: Build container and verify non-root writable storage
+        run: |
+          docker build -t sandworm-ci .
+          docker run --rm --entrypoint python sandworm-ci -c "import os,pathlib; assert os.getuid() == 10001; pathlib.Path('/data/probe').write_text('ok')"
+
   distribution:
     runs-on: ubuntu-latest
     steps:

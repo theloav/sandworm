@@ -62,11 +62,12 @@ pytest
 ```bash
 pip install build
 python -m build
-pip install dist/sandworm-0.1.0-py3-none-any.whl
+pip install dist/sandworm-0.2.0-py3-none-any.whl
 sandworm --help
 ```
 
-The wheel provides the CLI and HTML report renderer. The source distribution
-also includes documentation and the benign demonstration corpus. There is no
-hosted web application; view generated reports in a browser. Live CAPE and
-optional Neo4j/LLM services require separate configuration and credentials.
+The wheel provides the CLI, browser workspace/API, HTML report renderer, and
+guest provisioning code. `pip install '.[full]'` installs all Python extras;
+QEMU, Ghidra, Java and a CAPE deployment remain external tools/infrastructure.
+The source distribution also includes deployment assets, documentation and the
+benign demonstration corpus. See `docs/platform.md` and `docs/sandbox-deployment.md`.

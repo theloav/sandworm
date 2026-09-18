@@ -32,7 +32,7 @@ from .evidence import EvidenceStore
 from .sample import Sample
 from .triage import TriageResult, analyzer_tags_for, identify
 
-_STATIC_CACHE_VERSION = 2
+_STATIC_CACHE_VERSION = 3
 
 
 @dataclass
@@ -122,7 +122,8 @@ def _ingest_recorded_reports(
                 f"{kind} report exceeds the {ctx.config.max_report_bytes:,}-byte limit"
             )
         report = json.loads(report_path.read_text())
-        if not win_report_ok:
+        linux_memory = kind == "memory" and isinstance(report, dict) and report.get("platform") == "linux" and sample.format_hint in {"elf", "shell", "php", "javascript", "generic"}
+        if not win_report_ok and not linux_memory:
             notes.append(
                 f"⚠ refused the recorded {kind} report: it is a Windows/PE run but this sample is "
                 f"'{sample.format_hint}'. It describes a different binary, so it is NOT folded into the "
@@ -236,6 +237,30 @@ def _run_backend(
                 run_id=run_id,
             )
         )
+        from ..sandbox.runtime import normalize_runtime
+        for artifact in bundle.by_kind("trace"):
+            if artifact.size > (ctx.config.max_report_bytes or 128 * 1024**2):
+                raise ValueError("runtime report exceeds size limit")
+            document = json.loads(artifact.path.read_text())
+            if document.get("target_sha256") != sample.sha256:
+                raise ValueError("runtime report belongs to a different sample")
+            items = normalize_runtime(document, ctx)
+            items, count = annotate_runtime_addresses(store, items, sample)
+            staged_store.extend(items)
+            ran.append("dynamic.runtime")
+            staged_notes.append(f"ingested {len(items)} runtime events; {count} address correlations")
+        if bundle.by_kind("memory_dump") and policy.options.get("memory_platform"):
+            from ..analyzers.memory.collect import collect_memory
+            from ..analyzers.memory.vol3 import normalize_memory_report
+            for dump in bundle.by_kind("memory_dump"):
+                try:
+                    symbols = policy.options.get("symbols")
+                    report = collect_memory(sample, dump.path, platform=policy.options["memory_platform"], symbols=Path(symbols) if symbols else None)
+                    staged_store.extend(normalize_memory_report(report, ctx, "artifact:" + dump.sha256))
+                    ran.append("memory.vol3(image)")
+                    staged_notes.append(f"memory-image processing: {len(report['sections'])} plugins completed, {len(report['errors'])} failed")
+                except (RuntimeError, ValueError) as exc:
+                    staged_notes.append(f"memory-image processing unavailable: {exc}")
         store.extend(staged_store)
         notes.extend(staged_notes)
         notes.append(
@@ -296,6 +321,9 @@ def analyze_sample(
     enable_dynamic: bool = True,
     cape_report: str | None = None,
     memory_report: str | None = None,
+    runtime_report: str | None = None,
+    intelligence_snapshot: str | None = None,
+    decompiler_report: str | None = None,
     sandbox_backend: SandboxBackend | None = None,
     sandbox_policy: AnalysisPolicy | None = None,
     on_evidence=None,
@@ -324,11 +352,11 @@ def analyze_sample(
     # Recorded reports use the same artifact-bundle path as live sandboxes but
     # never execute bytes. A live backend is only invoked when explicitly passed
     # by the caller and dynamic analysis is enabled.
-    if sandbox_backend is not None and (cape_report or memory_report):
+    if sandbox_backend is not None and (cape_report or memory_report or runtime_report):
         raise ValueError("pass either sandbox_backend or recorded reports, not both")
     backend: SandboxBackend | None = None
-    if cape_report or memory_report:
-        backend = ReplayBackend(cape_report=cape_report, memory_report=memory_report)
+    if cape_report or memory_report or runtime_report:
+        backend = ReplayBackend(cape_report=cape_report, memory_report=memory_report, runtime_report=runtime_report)
     elif enable_dynamic:
         backend = sandbox_backend
 
@@ -405,6 +433,17 @@ def analyze_sample(
             except Exception:
                 pass
 
+    if decompiler_report:
+        from ..analyzers.static.ghidra import normalize_decompilation
+        path = Path(decompiler_report)
+        if path.stat().st_size > 32 * 1024**2:
+            raise ValueError("decompiler report exceeds 32 MiB")
+        document = json.loads(path.read_text())
+        if document.get("target_sha256") != sample.sha256:
+            raise ValueError("decompiler report belongs to another sample")
+        store.extend(normalize_decompilation(document, ctx))
+        analyzers_run.append("static.ghidra")
+
     bundle = None
     if backend is not None:
         backend_ran, bundle = _run_backend(
@@ -424,6 +463,10 @@ def analyze_sample(
             and bundle.isolation_verified
         )
         ctx.isolated = isolated
+
+    if intelligence_snapshot:
+        from ..enrich.intelligence import enrich_snapshot
+        store.extend(enrich_snapshot(store, intelligence_snapshot, run_id))
 
     # --- Reconstruction ---
     mappings = map_evidence(store)

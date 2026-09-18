@@ -237,6 +237,8 @@ def normalize_memory_report(report: list | dict, ctx: Context, ref: str) -> Iter
             yield from _extracted_config(section, ctx, ref)
             continue
         art, op, hint = _PLUGIN_MAP.get(plugin, ("process", "read", None))
+        if plugin == "linux.malfind.Malfind":
+            art, op, hint = "memory_region", "inject", "T1055"
         for row in _section_rows(section):
             details: dict = {"plugin": plugin}
             if hint:

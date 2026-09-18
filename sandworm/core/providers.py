@@ -8,7 +8,7 @@ only phrases the grounded facts.
 
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Any, Protocol
 
 from .config import Config, get_config
 
@@ -51,7 +51,7 @@ class AnthropicProvider:
 
     def __init__(self, config: Config) -> None:
         self.config = config
-        self._client = None
+        self._client: Any = None
 
     def _ensure(self):  # pragma: no cover - requires network/secret
         if self._client is None:
@@ -76,7 +76,7 @@ class OpenAICompatProvider:
 
     def __init__(self, config: Config) -> None:
         self.config = config
-        self._client = None
+        self._client: Any = None
 
     def _ensure(self):  # pragma: no cover
         if self._client is None:

@@ -41,7 +41,7 @@ class LinuxSandboxAnalyzer(BaseAnalyzer):
 def normalize_strace(trace: str, ctx: Context, ref: str) -> Iterator[EvidenceItem]:
     """Convert an inert ``strace -f`` text artifact into evidence."""
     for line in trace.splitlines():
-        match = re.match(r"(?:\[pid\s+(\d+)\]\s+)?(\w+)\((.*)", line)
+        match = re.match(r"(?:(?:\[pid\s+)?(\d+)\]?\s+)?(\w+)\((.*)", line)
         if not match:
             continue
         pid, syscall, args = match.groups()

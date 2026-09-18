@@ -29,7 +29,7 @@ def test_cache_miss_then_hit(cfg):
     r1 = analyze_sample(sample, config=cfg, enable_dynamic=False)
     assert "<cache>" not in r1.analyzers_run
     assert _cache_path(cfg, sample).exists()
-    assert _cache_path(cfg, sample).name.endswith(".v2.jsonl")
+    assert _cache_path(cfg, sample).name.endswith(".v3.jsonl")
 
     r2 = analyze_sample(sample, config=cfg, enable_dynamic=False)
     assert r2.analyzers_run == ["<cache>"]

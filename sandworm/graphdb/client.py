@@ -81,6 +81,8 @@ class Neo4jGraph:  # pragma: no cover - requires a running DB
     def __init__(self, config: Config) -> None:
         from neo4j import GraphDatabase
 
+        if not config.neo4j_uri:
+            raise ValueError("Neo4j URI is required")
         self._driver = GraphDatabase.driver(config.neo4j_uri, auth=(config.neo4j_user, config.neo4j_password))
         self._mirror = InMemoryGraph()  # keep a local mirror for query convenience
 

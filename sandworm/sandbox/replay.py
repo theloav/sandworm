@@ -31,12 +31,14 @@ class ReplayBackend:
         *,
         cape_report: str | Path | None = None,
         memory_report: str | Path | None = None,
+        runtime_report: str | Path | None = None,
     ) -> None:
-        if cape_report is None and memory_report is None:
+        if cape_report is None and memory_report is None and runtime_report is None:
             raise ValueError("ReplayBackend requires at least one recorded report")
         self._paths = {
             "cape_report": Path(cape_report) if cape_report is not None else None,
             "memory_report": Path(memory_report) if memory_report is not None else None,
+            "trace": Path(runtime_report) if runtime_report is not None else None,
         }
         self._jobs: dict[str, tuple[JobHandle, AnalysisPolicy, bool]] = {}
 

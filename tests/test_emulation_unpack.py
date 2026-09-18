@@ -84,3 +84,14 @@ def test_emulate_returns_none_without_entry():
     headers = {"sections": [{"vaddr": 0x1000, "vsize": 0x1000, "raw_ptr": 0, "raw_size": 0, "characteristics": 0x20000000}],
                "entry_rva": 0, "image_base": 0x400000, "pe32_plus": False}
     assert emulate_unpack(b"MZ", headers) is None
+
+
+def test_memory_only_virtual_alloc_model_recovers_heap_code():
+    # push PAGE_EXECUTE_READWRITE, MEM_COMMIT, size, address; call [IAT]
+    code = bytes.fromhex("6a40 6800100000 6800100000 6a00 ff1500134000 baefbeadde 8910 c3")
+    data = build_pe(code)
+    result = emulate_unpack(data, parse_pe_headers(data), imports={0x401300: "VirtualAlloc"})
+    assert result is not None
+    assert result.modeled_api_calls == ["VirtualAlloc"]
+    assert result.unpacked_bytes == bytes.fromhex("efbeadde")
+    assert result.regions[0][0] == 0x60000000

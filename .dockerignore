@@ -1,0 +1,13 @@
+.git
+.venv
+.sandworm
+.env
+dist
+build
+*.egg-info
+__pycache__
+.pytest_cache
+.mypy_cache
+.ruff_cache
+samples/real
+docker/clean_corpus
