@@ -10,6 +10,9 @@ Brier/ECE/reliability reports, real-engine YARA-X goodware audits, constrained
 copilot evidence selection, detection review bundles with optional Sigma KQL/SPL
 conversion, an indexed SQLite corpus snapshot, and optional Aho–Corasick ransom
 matching. See [measurement methods and remaining proposals](measurement.md).
+The [follow-up implementation checklist](implementation-status.md) records matched
+PHP/PowerShell audits, residual selection probes, corpus-review gates and remaining
+work. These measurements do not establish calibrated probabilities.
 
 ## Shipped platform
 
@@ -28,6 +31,7 @@ matching. See [measurement methods and remaining proposals](measurement.md).
 | Area | Implemented | Validation / boundary |
 | --- | --- | --- |
 | Core analysis | PE/ELF/script/document/archive routing, strings/IOCs, entropy, fingerprinting, disassembly, rules and plugins | Synthetic/unit fixtures; optional parser dependencies |
+| Stripped Go ELF | Bounded Go 1.18/1.20-layout pclntab function names and declared ranges | Real stripped Go 1.22 build and malformed-table tests; metadata is not decoded coverage or behavior proof |
 | Additional formats | Bounded JAR/APK string/API/member analysis, Mach-O slices/segments/imports, UEFI volume/FFS inventory | Synthetic malformed/bounds fixtures; not full Android execution, firmware authenticity or SMM analysis |
 | Decompilation | Ghidra headless C/p-code export and instruction ranges, sample-bound ingestion | Live benign ELF on Ghidra 12.1.3; requires separately installed Ghidra/JDK |
 | Emulation | Bounded Unicorn execution, selected memory-allocation/protection/copy API models, written executable-range recovery | Synthetic import/allocation tests; unknown OS APIs stop execution |

@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "engine": "yara-x",
+  "engine_version": "1.20.0",
+  "rules_sha256": "cf5eab555cc3213d28b2b4ff0d525776ed8fbb69235b67d6f9798536b0615533",
+  "manifest_sha256": "f0c197b7d093dc09251b5ba3e6dff8603bd386f324a3c56233eedca0fee6fd48",
+  "provenance": "Pester/Pester src directory at 98e56d65da1642a7158992b50ded240c42a3ac18, acquired 2026-09-18; PowerShell source, presumed benign upstream test framework; no code executed; not independently certified",
+  "files_total": 114,
+  "files_scanned": 114,
+  "selected_rules": [
+    "SANDWORM_77e23fc54a15"
+  ],
+  "extensions": [
+    ".ps1",
+    ".psd1",
+    ".psm1"
+  ],
+  "matching_files": 0,
+  "observed_fp_rate": 0.0,
+  "wilson95": [
+    0.0,
+    0.03259853415884162
+  ],
+  "complete": true,
+  "per_rule_matching_files": {
+    "SANDWORM_77e23fc54a15": 0
+  },
+  "matches": [],
+  "errors": [],
+  "scope": "Conditional on operator benign labels and this corpus/rule set only; errors are not counted as clean files. Not a population FP guarantee."
+}

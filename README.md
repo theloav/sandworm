@@ -21,6 +21,26 @@ Ghidra integration, offline memory-image processing, intelligence snapshots and
 graph clustering. See the [capability and validation checklist](docs/capabilities.md)
 for implemented scope and remaining research/deployment requirements.
 
+### Measurement status: infrastructure exists; the model is not calibrated
+
+| Check | Current result | Interpretation |
+|---|---|---|
+| ATT&CK regression | 8 fixtures, 64 judged pairs; precision 1.00, recall 0.60 | Provisional broad-presence labels; not independent malware accuracy |
+| Calibration | Harness, Brier/ECE calculations and reliability plot exist | Only 6 emitted positive claims: no meaningful calibration conclusion |
+| PHP-matched YARA audit | 0/1,897 WordPress PHP files matched the frozen PHP rule | **Rule also misses its source fixture**; no detector-utility claim |
+| PowerShell-matched YARA audit | 0/114 Pester source files matched the frozen PowerShell rule | Small single-project corpus; not Windows/PowerShell ecosystem FP rate |
+| Copilot residual risk | 5/5 scripted valid-but-misleading selections accepted; 0 out-of-context IDs | Demonstrates the allowlist's relevance limitation; live-model manipulation rate **not measured** |
+
+The earlier 0/1,267 Ubuntu-utility result is a **cross-format negative control**,
+not meaningful evidence about false positives for these script-derived rules.
+No thresholds or labels were retuned to improve these numbers.
+Source-fixture positive controls: PowerShell passes; PHP fails. The frozen PHP
+rule needs correction and a separately versioned re-audit before operational use.
+
+[Methods and raw results](docs/measurement.md) ·
+[Label policy and independent-corpus requirements](docs/corpus-label-policy.md) ·
+[Implementation checklist](docs/implementation-status.md)
+
 ```bash
 pip install -e '.[full]'
 sandworm user-add analyst --workspace lab --role admin
@@ -32,20 +52,8 @@ sandworm worker
 [Platform guide](docs/platform.md) · [Sandbox deployment](docs/sandbox-deployment.md)
 · [Advanced analysis](docs/advanced-analysis.md) · `sandworm doctor`
 
-### Measurement baseline
-
-The fixed eight-script regression corpus currently scores **precision 1.00,
-recall 0.60** (6 TP, 0 FP, 4 FN). Emitted-claim Brier score is **0.06198 on only
-six judged claims**—not evidence of real-world calibration. Two frozen generated
-YARA rules matched **0/1,267** hash-pinned, presumed-benign local Ubuntu utility
-files (observed FP rate 0%; descriptive 95% Wilson upper bound 0.3023%). This does
-not establish Windows/script-corpus performance or a zero-FP guarantee.
-
-[Raw results and reliability diagram](benchmarks/results/summary.md) ·
-[Methods, corpus limits, copilot trust boundary and detection bundles](docs/measurement.md)
-
 New commands: `benchmark`, `yara-audit`, `detection-bundle`, `index-corpus`,
-`query-corpus`, and `benchmark-matchers`. Optional extras: `evaluation`,
+`query-corpus`, `benchmark-matchers`, `benchmark-selection`, and `audit-corpus`. Optional extras: `evaluation`,
 `detections`, and `matching`. Grounded copilot answers now render validated
 evidence selections; unrestricted model prose is not labeled grounded.
 

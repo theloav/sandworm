@@ -52,10 +52,15 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -e '.[dev,evaluation,matching,detections]'
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22.x'
       - name: Metric and adversarial-boundary regression tests
-        run: pytest tests/test_evaluation.py tests/test_copilot_trust_boundary.py tests/test_detection_bundle_and_index.py
+        run: pytest tests/test_evaluation.py tests/test_measurement_review.py tests/test_go_symbols.py tests/test_copilot_trust_boundary.py tests/test_detection_bundle_and_index.py
       - name: Fixed-corpus ATT&CK and calibration regression gate
         run: sandworm benchmark benchmarks/manifest.json --out /tmp/benchmark --baseline benchmarks/results/metrics.json
+      - name: Scripted residual selection probe (not a live-model measurement)
+        run: sandworm benchmark-selection benchmarks/selection-manifest.json /tmp/benchmark/selection.json
       - name: Convert and test detection bundles
         run: |
           sandworm detection-bundle benchmarks/fixtures/download.ps1 /tmp/detections-splunk --sigma-target splunk --sigma-pipeline splunk_windows --sigma-product windows

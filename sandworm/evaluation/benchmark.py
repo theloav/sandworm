@@ -15,7 +15,7 @@ from ..core.sample import Sample
 from .metrics import calibration, classification, reliability_svg
 
 
-def evaluate(manifest_path: Path, *, threshold: float = 0.5) -> dict:
+def evaluate(manifest_path: Path, *, threshold: float = 0.5, split: str | None = None) -> dict:
     if not 0 <= threshold <= 1:
         raise ValueError("threshold must be in [0, 1]")
     raw = manifest_path.read_bytes()
@@ -23,12 +23,21 @@ def evaluate(manifest_path: Path, *, threshold: float = 0.5) -> dict:
     if manifest.get("schema_version") != 1 or not manifest.get("cases"):
         raise ValueError("nonempty schema_version=1 benchmark required")
     root = manifest_path.parent.resolve()
+    selected_cases = manifest["cases"]
+    if split is not None:
+        from .corpus_review import audit_corpus
+        if split not in {"train", "validation", "test"}:
+            raise ValueError("split must be train, validation or test")
+        review = audit_corpus(manifest_path)
+        if not review["ready_for_scoped_evaluation"]:
+            raise ValueError("corpus review failed: " + "; ".join(review["issues"][:5]))
+        selected_cases = [case for case in selected_cases if case["split"] == split]
     counts: dict[str, list[int]] = {}
     decisions, emitted, cases = [], [], []
     seen = set()
     with tempfile.TemporaryDirectory(prefix="sw-eval-") as temporary:
         cfg = replace(Config(work_dir=Path(temporary)), llm_provider="mock", neo4j_uri=None)
-        for case in manifest["cases"]:
+        for case in selected_cases:
             if case["id"] in seen:
                 raise ValueError("duplicate case id")
             seen.add(case["id"])
@@ -63,6 +72,8 @@ def evaluate(manifest_path: Path, *, threshold: float = 0.5) -> dict:
     return {"schema_version": 1, "sandworm_version": __version__, "corpus": manifest.get("name"),
             "corpus_kind": manifest.get("kind", "unspecified"), "manifest_sha256": hashlib.sha256(raw).hexdigest(),
             "threshold": threshold, "micro": classification(*totals),
+            "split": split, "label_policy": manifest.get("label_policy", "legacy broad static-presence fixtures; provisional"),
+            "measurement_status": "measurement infrastructure; not calibrated-model validation",
             "per_technique": {t: classification(*row) for t, row in sorted(counts.items())},
             "calibration_emitted": calibration(emitted), "calibration_decisions": calibration(decisions),
             "calibration_note": "Emitted: judged claims only. Decisions: all judged pairs, absent mappings scored 0 (not a Bayesian posterior). Neither implies deployment calibration.",

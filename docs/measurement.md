@@ -2,21 +2,59 @@
 
 ## Published baseline (2026-09-18)
 
+**Status: measurement infrastructure, not a calibrated model.** The eight-fixture
+baseline retains its original broad-presence labels. They are provisional and must
+not be used to tune toward generic language-presence detections. New independent
+corpora use the [behavior-capability label policy](corpus-label-policy.md).
+
 | Measurement | Result | What it does **not** establish |
 | --- | --- | --- |
 | Eight labeled script fixtures, 64 explicitly judged sample/technique pairs | TP 6, FP 0, FN 4, TN 54; precision 1.00, recall 0.60 | Independent malware-corpus accuracy or runtime behavior |
 | Calibration of emitted judged claims | Brier 0.06198, n=6 | Reliable calibration: all six emitted judged claims are positive, and the set is far too small |
-| Two frozen generated YARA rules over 1,267 unique local Ubuntu utility files | 0 matching files / 1,267 scanned; observed rate 0%; Wilson upper bound approximately 0.3023% | Windows/SysWOW64, PyPI/npm populations, all generated rules, or zero future false positives |
+| Two frozen script-derived YARA rules over 1,267 local Ubuntu utility files | 0 matching files / 1,267 scanned | Cross-format negative control: the population is poorly matched to these rules, so this is practically uninformative about relevant FP risk |
+| Frozen PHP rule over WordPress PHP source | 0 / 1,897 unique files matched | Rule also misses its own source fixture; does not establish detector utility |
+| Frozen PowerShell rule over Pester source | 0 / 114 unique files matched | One test-framework source tree and one rule; small, not ecosystem coverage |
 | 8 MiB fixed-seed ransomware-sweep microbenchmark, five repetitions | Regex median 0.1781 s; Aho–Corasick 0.1135 s (1.57×) | Whole-pipeline speedup, reduced peak RSS, arbitrary data distributions |
 
 Raw inventories, exact rule sources, metric JSON, and a reliability SVG are in
 [`benchmarks/`](../benchmarks/). Results are scoped to these inputs and this host.
-The goodware files are presumed-benign locally installed utilities, not independently
-certified. Files are SHA-256-deduplicated and symlinks excluded. Related utilities
+The goodware files are presumed-benign utilities or upstream project sources, not independently
+certified. Files are SHA-256-deduplicated and symlinks excluded. Related files
 are not statistically independent; Wilson intervals are descriptive Bernoulli
 intervals, not a deployment guarantee. No source binaries are redistributed.
 
-The ATT&CK labels describe **static capability presence**, not maliciousness.
+The matched audits freeze the **same rules** as before: the PHP rule is scored only
+against `.php` files from WordPress commit `cfdab1a6ba05cd035fb23049ccbe7fa7b9ef2643`;
+the PowerShell rule only against `.ps1/.psm1/.psd1` files under Pester `src/` at
+`98e56d65da1642a7158992b50ded240c42a3ac18`. Nothing was installed or executed from
+these projects. Source commits, paths, sizes, hashes and exact rule selection are
+recorded in `benchmarks/php-goodware-*` and `benchmarks/powershell-goodware-*`.
+These are better format matches, but one project per language still has substantial
+selection bias and shared code. Specific synthetic anchors can also make these
+rules easy to avoid matching; zero observed matches does not establish rule utility
+or malware recall. No Windows PE rules/corpus were evaluated in this pass.
+
+**Positive-control failure:** scanning the original source fixtures with these
+frozen rules matches `download.ps1` with `SANDWORM_77e23fc54a15`, but produces no
+match for `benign_webshell.php` with `SANDWORM_43af2e95eba1`. The PHP audit is thus
+not evidence of a useful detector even with a format-matched negative population.
+The rules remain unchanged; regression tests preserve this known failure.
+Generated anchors can describe decoded/behavioral evidence absent from raw sample
+bytes. Future rule revisions must pass raw-source positive controls and undergo a
+separately versioned audit; synthetic anchor tests alone are insufficient.
+
+Reproduce after checking out the exact commits in local source directories:
+
+```bash
+sandworm yara-audit benchmarks/audited-rules.yar benchmarks/php-goodware-manifest.json \
+  /path/to/wordpress /tmp/php-fp.json --rule-name SANDWORM_43af2e95eba1
+sandworm yara-audit benchmarks/audited-rules.yar benchmarks/powershell-goodware-manifest.json \
+  /path/to/pester/src /tmp/powershell-fp.json --rule-name SANDWORM_77e23fc54a15
+```
+
+The legacy ATT&CK labels were intended to describe **static capability presence**,
+not maliciousness, but include broad language-presence judgments that remain
+provisional under the new behavior-capability policy.
 The four misses are process enumeration, benign PowerShell usage, Unix shell usage,
 and JavaScript sub-technique attribution. Labels were authored separately from the
 mapper's output; they were not changed to hide these misses. This is still a small,
@@ -91,6 +129,32 @@ these deterministic boundaries. They do not prove universal prompt-injection
 resistance or replace live, repeated, model-specific adversarial evaluations. No
 classifier model or accuracy claim is implied.
 
+### Residual selection/relevance risk
+
+`benchmark-selection` runs paired clean/injected contexts through production Q&A.
+Gold evidence stays unchanged; the attack is placed in an untrusted carrier record
+and aims to select a real but misleading example record while dropping the gold
+record. It reports clean correctness, target availability, selection changes,
+abstentions, rejections and out-of-context citations. An attack succeeds only for a
+clean-correct pair where the target is selected and gold evidence is lost; already
+wrong baseline answers are not counted as attack successes.
+
+```bash
+sandworm benchmark-selection benchmarks/selection-manifest.json /tmp/selection.json
+# Explicitly sends synthetic fixture context to the configured external provider:
+sandworm benchmark-selection benchmarks/selection-manifest.json /tmp/live-selection.json \
+  --live --allow-external --repeats 10
+```
+
+The default **scripted valid-ID probe** selects correctly on clean calls and chooses
+the decoy on attack calls. All five decoys are accepted, with no out-of-context IDs.
+This demonstrates that the allowlist does not enforce relevance. It is **not** a
+measurement of payload persuasiveness: `manipulation_success_rate` is null for the
+scripted report. No live provider/key was configured during this pass. Live mode
+requires an explicit configured provider and consent flag; reports name the model
+and preserve per-pair results. The five synthetic cases are not an independent,
+comprehensive benchmark, and repeated trials are correlated.
+
 ## Detection-as-code bundles
 
 ```bash
@@ -138,13 +202,20 @@ sample bytes: this change is **not** mmap/chunked 500 MiB analysis.
 ## Remaining proposals
 
 Not implemented in this pass: full mmap/chunked analysis, CPU-lane process pools,
-DuckDB analytics/lineage migration, deep .NET IL/resource decryption, stripped-Go
-pclntab recovery/Rust demangling, FLOSS-style function emulation, family-specific
+DuckDB analytics/lineage migration, deep .NET IL/resource decryption,
+Rust demangling, FLOSS-style function emulation, family-specific
 ConfigExtractor plugins, tree-sitter deobfuscation, recursive email/disk-image
 delivery containers, PCAP/JA3/JA4 analysis, guest eBPF, comprehensive evasion
 reporting and a Frida Windows agent. These need independent fixtures and validation,
 not placeholder modules. Real Windows CAPE and hardware tracing prerequisites
 remain as described in the sandbox deployment guide.
+
+Go pclntab recovery is now implemented for ELF with Go 1.18/1.20 table layouts,
+bounded to 10,000 output functions and 64 MiB table data. A Go 1.22 stripped benign
+ELF build validates recovery of `main.main`, `main.addNumbers` and `runtime.main`
+without executing the program. Unsupported/corrupt tables fail visibly. It does
+not cover every Go version/container or establish new ATT&CK behavior; declared
+function spans are not promoted into decoded-instruction coverage.
 
 Primary references: [YARA-X Python API](https://virustotal.github.io/yara-x/docs/api/python/),
 [Sigma processing pipelines](https://sigmahq.io/docs/digging-deeper/pipelines.html),

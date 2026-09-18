@@ -6,7 +6,7 @@ recursive-include samples/synthetic *
 recursive-include samples/benign *
 recursive-include plugins_example *.py
 recursive-include tests *.py
-recursive-include tests/fixtures *.json
+recursive-include tests/fixtures *.json *.go
 recursive-include deploy *.sh *.service *.yml Caddyfile
 recursive-include sandworm/platform/static *.html *.css *.js
 recursive-include sandworm/analyzers/static/scripts *.java

@@ -32,7 +32,7 @@ from .evidence import EvidenceStore
 from .sample import Sample
 from .triage import TriageResult, analyzer_tags_for, identify
 
-_STATIC_CACHE_VERSION = 3
+_STATIC_CACHE_VERSION = 4
 
 
 @dataclass

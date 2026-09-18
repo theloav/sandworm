@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "engine": "yara-x",
+  "engine_version": "1.20.0",
+  "rules_sha256": "cf5eab555cc3213d28b2b4ff0d525776ed8fbb69235b67d6f9798536b0615533",
+  "manifest_sha256": "4298707cf00564f245f8c7cb4d2fdf21ec710a0ce302b28894963b6cc4b7f5b3",
+  "provenance": "WordPress/WordPress at cfdab1a6ba05cd035fb23049ccbe7fa7b9ef2643, acquired 2026-09-18; PHP distribution sources, presumed benign; no code executed; not independently certified",
+  "files_total": 1897,
+  "files_scanned": 1897,
+  "selected_rules": [
+    "SANDWORM_43af2e95eba1"
+  ],
+  "extensions": [
+    ".php"
+  ],
+  "matching_files": 0,
+  "observed_fp_rate": 0.0,
+  "wilson95": [
+    0.0,
+    0.0020209254185130274
+  ],
+  "complete": true,
+  "per_rule_matching_files": {
+    "SANDWORM_43af2e95eba1": 0
+  },
+  "matches": [],
+  "errors": [],
+  "scope": "Conditional on operator benign labels and this corpus/rule set only; errors are not counted as clean files. Not a population FP guarantee."
+}

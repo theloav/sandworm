@@ -1,0 +1,4 @@
+{
+  "description": "Evidence-driven malware analysis with disposable Linux sandboxes, detection-as-code, and reproducible evaluation.",
+  "topics": ["malware-analysis", "reverse-engineering", "detection-engineering", "yara", "sigma", "mitre-attack", "prompt-injection", "python"]
+}

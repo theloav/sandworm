@@ -8,6 +8,32 @@ import typer
 
 
 def register_commands(app: typer.Typer) -> None:
+    @app.command("audit-corpus")
+    def audit_corpus_command(manifest: Path, out: Path):
+        """Check reviewed labels, sample hashes and family/time split leakage."""
+        from .corpus_review import audit_corpus
+        report = audit_corpus(manifest)
+        out.write_text(json.dumps(report, indent=2) + "\n")
+        typer.echo(json.dumps({"ready": report["ready_for_scoped_evaluation"], "issues": report["issues"]}))
+        if not report["ready_for_scoped_evaluation"]:
+            raise typer.Exit(2)
+
+    @app.command("benchmark-selection")
+    def benchmark_selection(manifest: Path, out: Path, repeats: int = 1, live: bool = False, allow_external: bool = False):
+        """Measure paired clean/injected relevance; default is a labeled scripted probe."""
+        from ..core.config import Config
+        from ..core.providers import get_provider
+        from .selection import ScriptedSelectionProbe, evaluate_selection
+        if live:
+            cfg = Config()
+            if not allow_external or cfg.llm_provider not in {"openai", "openai-compat", "anthropic"} or not cfg.llm_api_key:
+                raise typer.BadParameter("live evaluation requires configured provider/key and --allow-external to send fixture context")
+            report = evaluate_selection(manifest, get_provider(cfg), repeats=repeats, live_model=cfg.llm_model)
+        else:
+            report = evaluate_selection(manifest, ScriptedSelectionProbe(), repeats=repeats)
+        out.write_text(json.dumps(report, indent=2) + "\n")
+        typer.echo(json.dumps({key: report[key] for key in ("measurement_kind", "pairs", "conditional_failures", "manipulation_success_rate")}))
+
     @app.command("benchmark-matchers")
     def benchmark_matchers(out: Path, megabytes: int = 8, repeats: int = 5):
         """Compare current regex sweep with optional Aho-Corasick; verify parity."""
@@ -49,15 +75,15 @@ def register_commands(app: typer.Typer) -> None:
 
     @app.command("benchmark")
     def benchmark(manifest: Path, out: Path = Path("benchmark-results"), threshold: float = 0.5,
-                  baseline: Path | None = None):
+                  baseline: Path | None = None, split: str | None = None):
         """Measure ATT&CK precision/recall and calibration without sample execution."""
         from .benchmark import evaluate, write_results
-        report = evaluate(manifest, threshold=threshold)
+        report = evaluate(manifest, threshold=threshold, split=split)
         write_results(report, out)
         typer.echo(json.dumps({"micro": report["micro"], "emitted_brier": report["calibration_emitted"]["brier"]}))
         if baseline:
             previous = json.loads(baseline.read_text())
-            if previous["manifest_sha256"] != report["manifest_sha256"] or previous["threshold"] != threshold:
+            if previous["manifest_sha256"] != report["manifest_sha256"] or previous["threshold"] != threshold or previous.get("split") != split:
                 raise typer.BadParameter("baseline must use the identical corpus and threshold")
             regressed = any(row["fp"] > previous["per_technique"][tid]["fp"] or row["fn"] > previous["per_technique"][tid]["fn"]
                             for tid, row in report["per_technique"].items())
@@ -66,19 +92,19 @@ def register_commands(app: typer.Typer) -> None:
                 raise typer.Exit(1)
 
     @app.command("goodware-inventory")
-    def goodware_inventory(corpus: Path, out: Path, provenance: str = typer.Option(...)):
+    def goodware_inventory(corpus: Path, out: Path, provenance: str = typer.Option(...), extensions: str = ""):
         """Hash actual files for auditing; does not certify benign status."""
         from .goodware import inventory
         if out.resolve().is_relative_to(corpus.resolve()):
             raise typer.BadParameter("write the inventory outside the scanned corpus")
-        out.write_text(json.dumps(inventory(corpus, provenance=provenance), indent=2) + "\n")
+        out.write_text(json.dumps(inventory(corpus, provenance=provenance, extensions=tuple(x.strip() for x in extensions.split(",") if x.strip())), indent=2) + "\n")
         typer.echo(str(out))
 
     @app.command("yara-audit")
-    def yara_audit(rules: Path, manifest: Path, corpus: Path, out: Path, timeout: int = 30):
+    def yara_audit(rules: Path, manifest: Path, corpus: Path, out: Path, timeout: int = 30, rule_name: str | None = None):
         """Scan hash-pinned goodware using YARA-X; no sample execution."""
         from .goodware import audit
-        report = audit(rules, manifest, corpus, timeout=timeout)
+        report = audit(rules, manifest, corpus, timeout=timeout, rule_name=rule_name)
         out.write_text(json.dumps(report, indent=2) + "\n")
         typer.echo(json.dumps({k: report[k] for k in ("files_scanned", "matching_files", "observed_fp_rate", "complete")}))
         if not report["complete"]:

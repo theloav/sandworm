@@ -14,14 +14,19 @@ def sha256_file(path: Path) -> str:
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def inventory(root: Path, *, provenance: str) -> dict:
+def inventory(root: Path, *, provenance: str, extensions: tuple[str, ...] = ()) -> dict:
     if not provenance.strip() or not root.is_dir():
         raise ValueError("existing corpus directory and provenance required")
     rows = []
     seen = set()
     root = root.resolve()
+    extensions = tuple(sorted({extension.lower() for extension in extensions}))
+    if any(not extension.startswith(".") or "/" in extension for extension in extensions):
+        raise ValueError("extensions must be suffixes such as .php or .ps1")
     for path in sorted(root.rglob("*")):
         if path.is_symlink() or not path.is_file() or not path.resolve().is_relative_to(root):
+            continue
+        if extensions and path.suffix.lower() not in extensions:
             continue
         digest = sha256_file(path)
         if digest in seen:
@@ -30,11 +35,11 @@ def inventory(root: Path, *, provenance: str) -> dict:
         rows.append({"path": path.relative_to(root).as_posix(), "sha256": digest, "size": path.stat().st_size})
     if not rows:
         raise ValueError("no files in corpus")
-    return {"schema_version": 1, "provenance": provenance, "files": rows,
+    return {"schema_version": 1, "provenance": provenance, "files": rows, "extensions": list(extensions),
             "label_policy": "Operator asserts benign status; inventory does not establish trustworthiness."}
 
 
-def audit(rule_path: Path, manifest_path: Path, root: Path, *, timeout: int = 30) -> dict:
+def audit(rule_path: Path, manifest_path: Path, root: Path, *, timeout: int = 30, rule_name: str | None = None) -> dict:
     import yara_x
 
     if timeout < 1:
@@ -53,6 +58,10 @@ def audit(rule_path: Path, manifest_path: Path, root: Path, *, timeout: int = 30
     root = root.resolve()
     matched, errors, scanned, seen = [], [], 0, set()
     per_rule = {rule.identifier: 0 for rule in rules}
+    if rule_name is not None:
+        if rule_name not in per_rule:
+            raise ValueError("selected rule does not exist")
+        per_rule = {rule_name: 0}
     if not per_rule:
         raise ValueError("at least one compiled rule required")
     for row in manifest["files"]:
@@ -68,7 +77,7 @@ def audit(rule_path: Path, manifest_path: Path, root: Path, *, timeout: int = 30
             result = scanner.scan_file(str(path))
             if sha256_file(path) != row["sha256"]:
                 raise ValueError("file changed during scan")
-            ids = [rule.identifier for rule in result.matching_rules]
+            ids = [rule.identifier for rule in result.matching_rules if rule.identifier in per_rule]
             scanned += 1
             if ids:
                 matched.append({"path": row["path"], "sha256": row["sha256"], "rules": ids})
@@ -79,6 +88,7 @@ def audit(rule_path: Path, manifest_path: Path, root: Path, *, timeout: int = 30
     return {"schema_version": 1, "engine": "yara-x", "engine_version": importlib.metadata.version("yara-x"),
             "rules_sha256": sha256_file(rule_path), "manifest_sha256": hashlib.sha256(raw).hexdigest(),
             "provenance": manifest["provenance"], "files_total": len(manifest["files"]), "files_scanned": scanned,
+            "selected_rules": sorted(per_rule), "extensions": manifest.get("extensions", []),
             "matching_files": len(matched), "observed_fp_rate": len(matched) / scanned if scanned else None,
             "wilson95": wilson(len(matched), scanned), "complete": not errors,
             "per_rule_matching_files": per_rule, "matches": matched, "errors": errors,

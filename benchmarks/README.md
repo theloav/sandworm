@@ -2,6 +2,24 @@
 
 Read [methods and caveats](../docs/measurement.md) before interpreting these files.
 
+The `php-goodware-*` and `powershell-goodware-*` manifest/result pairs record
+population-matched scans of WordPress PHP and Pester PowerShell sources. Exact
+upstream commits, suffix filters, frozen rule selection and reproduction commands
+are documented in the methods. These are single-project convenience populations,
+not estimates for all benign software. The older Linux audit is a cross-format
+negative control, not a meaningful script-rule false-positive estimate.
+The frozen PowerShell rule matches its source fixture; the frozen PHP rule does
+not. Tests preserve this known miss. Zero goodware hits do not establish utility.
+
+`selection-manifest.json` and `selection-probe-results.json` exercise paired clean
+and injected evidence through the production copilot boundary. The provider is
+scripted: its five accepted misleading selections demonstrate residual risk, not
+an observed live-model manipulation rate. No live-model rate has been measured.
+
+The legacy labels remain frozen and provisional. New independently reviewed
+corpora must follow [the label policy](../docs/corpus-label-policy.md); no synthetic
+expansion is presented as independent annotation or calibration.
+
 - `manifest.json`: eight manually labeled script fixtures, hash-pinned; only the
   listed positive/negative techniques are judged. Never execute these fixtures.
 - `results/metrics.json`, `summary.md`, `reliability.svg`: regression baseline,

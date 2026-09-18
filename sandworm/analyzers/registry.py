@@ -95,6 +95,7 @@ def register_builtins() -> AnalyzerRegistry:
         elf,
         fingerprint,
         firmware,
+        go_symbols,
         lnk,
         macho,
         office,
@@ -105,7 +106,7 @@ def register_builtins() -> AnalyzerRegistry:
         unpack,
     )
 
-    for mod in (common, php, script, pe, elf, office, unpack, decode, disasm, fingerprint, lnk, pdf, containers, macho, firmware):
+    for mod in (common, php, script, pe, elf, office, unpack, decode, disasm, fingerprint, lnk, pdf, containers, macho, firmware, go_symbols):
         reg = getattr(mod, "register", None)
         if reg is not None:
             reg(REGISTRY)

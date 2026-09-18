@@ -1,0 +1,582 @@
+{
+  "schema_version": 1,
+  "provenance": "Pester/Pester src directory at 98e56d65da1642a7158992b50ded240c42a3ac18, acquired 2026-09-18; PowerShell source, presumed benign upstream test framework; no code executed; not independently certified",
+  "files": [
+    {
+      "path": "Format.ps1",
+      "sha256": "58ed464a473f2c40182ce87ad5b77107814a1dec42baac28823a02aa6fc6f9b1",
+      "size": 4935
+    },
+    {
+      "path": "Format2.ps1",
+      "sha256": "fefa3d5e0d6b9f30d6c713238ea87fd2d27f4d9ec0502451699d1e81724aa8ba",
+      "size": 11404
+    },
+    {
+      "path": "Main.ps1",
+      "sha256": "bfa55cecab7a94297781f2980fabae21f3d4fe4fad6ec348f80985140601a399",
+      "size": 68395
+    },
+    {
+      "path": "Module.ps1",
+      "sha256": "b3effe985faddf3cc50c7a1a321c8c34b6058310596c030f9c7d21cb56738102",
+      "size": 3247
+    },
+    {
+      "path": "Pester.RSpec.ps1",
+      "sha256": "4ff3af7e280160dd82fdf2ab8137ceb36b5bc12afd2748764cea8e5a6c76bbd5",
+      "size": 24802
+    },
+    {
+      "path": "Pester.Runtime.ps1",
+      "sha256": "400f6510e295153940b705695c1daca33af7971e0f300752b688bbfc4eb2733a",
+      "size": 139171
+    },
+    {
+      "path": "Pester.ScriptScope.ps1",
+      "sha256": "83c594855f2000773e7a5f851c37b498aa3a32a88dd205370fc5d17d09c3f93b",
+      "size": 474
+    },
+    {
+      "path": "Pester.State.ps1",
+      "sha256": "e10a3a8c6bd039c63af47bd70f83f5e87297f9cfa290e1d908262b16ea54f572",
+      "size": 392
+    },
+    {
+      "path": "Pester.Types.ps1",
+      "sha256": "af5b0e255fa4b6f93afcc225a24b3a00c0d31509b9e1dbc549e1149a04259c01",
+      "size": 2120
+    },
+    {
+      "path": "Pester.Utility.ps1",
+      "sha256": "147e48bd86e53e727223a4463b858332e610309b93747716295b0b8f4f35a0ac",
+      "size": 12741
+    },
+    {
+      "path": "Pester.psd1",
+      "sha256": "be5ddd63a67bc6f5373e26a0ad740de8dc2cd1ee3cd58f1b5d97ae82bc4938e2",
+      "size": 6180
+    },
+    {
+      "path": "TypeClass.ps1",
+      "sha256": "f520873f5a33eb914d70214effbbcec041d91541314c523698af501798b22b0c",
+      "size": 1938
+    },
+    {
+      "path": "csharp/Pester/DiffPlex/Update-VendoredDiffPlex.ps1",
+      "sha256": "0b02401bb1efb7df5ce3ff0c61541dab10fd0f576554dbaba9a53017acf705a7",
+      "size": 9460
+    },
+    {
+      "path": "csharp/Sync-WithProfiler.ps1",
+      "sha256": "fec1a32524a83e1f9a1300b1251d72b9a9b3ec20081991e01fb2b20b3e252932",
+      "size": 1018
+    },
+    {
+      "path": "functions/Context.ps1",
+      "sha256": "4d6d0284dd2b821b4438a904f765eded2716550edda54cda127361d3b4bd310e",
+      "size": 5269
+    },
+    {
+      "path": "functions/Coverage.Plugin.ps1",
+      "sha256": "be485eeb99b69f1dc3a2566808fb53a74338b64803d4ea38b08af76edb0d95fa",
+      "size": 12578
+    },
+    {
+      "path": "functions/Coverage.ps1",
+      "sha256": "8d58bc0a0a0855e043969d84387638ddd591ca8c8a585f9866961f8161cec541",
+      "size": 57104
+    },
+    {
+      "path": "functions/Describe.ps1",
+      "sha256": "9461409a43bf157041de78a85d03d0525749ec7e132145e8fded5131f34c4a4c",
+      "size": 8667
+    },
+    {
+      "path": "functions/Environment.ps1",
+      "sha256": "099feed642ed21c8cccd5f6fb764e50684cc80c92db32fde941c72dec8c83dd9",
+      "size": 2278
+    },
+    {
+      "path": "functions/Get-ShouldOperator.ps1",
+      "sha256": "eac4c3653aa4eadcb9f60a20a7d5f1bbc079d6762b92e7278287724ecd9c5e1f",
+      "size": 4694
+    },
+    {
+      "path": "functions/Get-SkipRemainingOnFailurePlugin.ps1",
+      "sha256": "423af9c5540f19e6eb1261166d31384b547376dbbc2b59ac7423241ecd9383b2",
+      "size": 6695
+    },
+    {
+      "path": "functions/InModuleScope.ps1",
+      "sha256": "43ac100200ca765387eef2a4402a898b03ac8ccf096a9ca500afe0354a8723e7",
+      "size": 12436
+    },
+    {
+      "path": "functions/It.ps1",
+      "sha256": "0d33f1343730e6812eeb9b9709e865e8b15aeefeb92d3ecb5f9716aecf401c61",
+      "size": 6409
+    },
+    {
+      "path": "functions/Mock.ps1",
+      "sha256": "62a2668888c27a11b89d93c8b81d3617d744017ac3f00d17fc5d36a4c9e68fe7",
+      "size": 96642
+    },
+    {
+      "path": "functions/New-Fixture.ps1",
+      "sha256": "9616958b99af6d324a68b3c1b74c21d46fab756e4a809f11c9894109a4aa299d",
+      "size": 3977
+    },
+    {
+      "path": "functions/New-MockObject.ps1",
+      "sha256": "db8bc37581bbbca95bd6220ec08f843ede9931d512c01f7a2d8f142a569781bb",
+      "size": 6770
+    },
+    {
+      "path": "functions/Output.ps1",
+      "sha256": "4b1a9adcdebf18a439436818880ae18f4d34ac2f6decadb802620ec13296505c",
+      "size": 53120
+    },
+    {
+      "path": "functions/Pester.BeforeContainer.ps1",
+      "sha256": "0b5d311647d6fcb33001cdeab0dd2b9752c8bc664236d092e5e39b843a96088a",
+      "size": 9792
+    },
+    {
+      "path": "functions/Pester.Debugging.ps1",
+      "sha256": "3f9ac23b6b31931dd7c0b9ceee7949f297c71cab7f028d1dde1d13539714028a",
+      "size": 8045
+    },
+    {
+      "path": "functions/Pester.Parallel.ps1",
+      "sha256": "c4349b95407ca77d3e2ea7abcd5016243ce214663db9f549f706aaac013a770b",
+      "size": 24816
+    },
+    {
+      "path": "functions/Pester.SafeCommands.ps1",
+      "sha256": "0b8b0bd35a9951b7f282597920afd8c216e2ee03c4c8ceed5db68bd3a11d1a06",
+      "size": 11576
+    },
+    {
+      "path": "functions/Pester.Scoping.ps1",
+      "sha256": "fd2caefbc602a7cec4f06673c3e16b148f544a1eda6cd0c8693cb91353f47acb",
+      "size": 1873
+    },
+    {
+      "path": "functions/Pester.SessionState.Mock.ps1",
+      "sha256": "2cc576be9b94493a7db9c66216cfa85b72afc0adb041e8924ebd3a253b6d34e7",
+      "size": 55729
+    },
+    {
+      "path": "functions/Set-ItResult.ps1",
+      "sha256": "1e6ff586bb2f5e5914c9ec792ef656fd3ac44023bf3ad84d1fe2bb2b562a3665",
+      "size": 3031
+    },
+    {
+      "path": "functions/SetupTeardown.ps1",
+      "sha256": "9c40022e3d94ac1080dcb557d1134a163d2cec454b9b18f9e0a5353127620b04",
+      "size": 8791
+    },
+    {
+      "path": "functions/TestDrive.ps1",
+      "sha256": "9ee7936a190faf0c0ab8e7812b755c2eb16007433d536372d1e4ac10b03b61dc",
+      "size": 8657
+    },
+    {
+      "path": "functions/TestRegistry.ps1",
+      "sha256": "a0db6b7120280f03b295a2a48a5b581dce9c037fef51e37c8ea3ac81fd02eb8c",
+      "size": 8811
+    },
+    {
+      "path": "functions/TestResults.JUnit4.ps1",
+      "sha256": "f982d545860ac596cd7e983ef27babd04d3a5361405d2b9812341be53e89cc80",
+      "size": 8171
+    },
+    {
+      "path": "functions/TestResults.NUnit25.ps1",
+      "sha256": "b408d3e2f0cdc57c897726988792ed2e96f79e076542c45d6df4eef6ab65bba9",
+      "size": 15158
+    },
+    {
+      "path": "functions/TestResults.NUnit3.ps1",
+      "sha256": "e9b36fa9173b37593d8bb7f620fd3e67eee2f7106d2a0015c2f67f34b0715ba8",
+      "size": 31456
+    },
+    {
+      "path": "functions/TestResults.ps1",
+      "sha256": "102a3b909c5c4792d9c9619afd531f6c3a83dc5e9c5b65739fee36c8ccae7cf7",
+      "size": 19825
+    },
+    {
+      "path": "functions/assert/Boolean/Should-BeFalse.ps1",
+      "sha256": "faefdcc5903d2d258f97733692de5f5648c3ea0acb8d7879192360d1c61e3cb7",
+      "size": 2244
+    },
+    {
+      "path": "functions/assert/Boolean/Should-BeFalsy.ps1",
+      "sha256": "08dfbb8428086f62f7eacfa74bfd2ebd7bdd555acb196f683f85a89ee259d189",
+      "size": 2264
+    },
+    {
+      "path": "functions/assert/Boolean/Should-BeTrue.ps1",
+      "sha256": "b84d2862d400e4f404bb03006cb732404278b2e1d2d6114d86e0041fe534df97",
+      "size": 2222
+    },
+    {
+      "path": "functions/assert/Boolean/Should-BeTruthy.ps1",
+      "sha256": "2262aa1338bd6d8eed8559e5ed7699d457ab75914f88854b7f50eb8a24e307a1",
+      "size": 2300
+    },
+    {
+      "path": "functions/assert/Collection/Should-All.ps1",
+      "sha256": "19018ab5687be72bdb7326550e8a312a6f24f925ca13eb248fd1741ae95ba598",
+      "size": 4971
+    },
+    {
+      "path": "functions/assert/Collection/Should-Any.ps1",
+      "sha256": "b1e6bce19143ed627662200fb0debb9b9fb39fcd326d30eb2241937b4f8ed4e1",
+      "size": 4526
+    },
+    {
+      "path": "functions/assert/Collection/Should-BeCollection.ps1",
+      "sha256": "0173e99ce0cd69c42f09e15c232b113c4aed49f86dba175b515ee898f97a5ed6",
+      "size": 5768
+    },
+    {
+      "path": "functions/assert/Collection/Should-ContainCollection.ps1",
+      "sha256": "bc76c8a79ff01fb78c885411ae2868c265af58676337af63a588f2af43a79f03",
+      "size": 4359
+    },
+    {
+      "path": "functions/assert/Collection/Should-NotContainCollection.ps1",
+      "sha256": "cbd1c841b92f16637c99409efbe9f872ef87cc62330fd7e4e6d5c8f9ba21fb6a",
+      "size": 2972
+    },
+    {
+      "path": "functions/assert/Common/Collect-Input.ps1",
+      "sha256": "48c4cdd108941c06ae7bf2fc51a8a58ae65d158ef18a75eefcc4465b4ab0c9a6",
+      "size": 2736
+    },
+    {
+      "path": "functions/assert/Common/Ensure-ExpectedIsNotCollection.ps1",
+      "sha256": "82de762a249aa907204309f6e1f399adff4a383ad47b68fcb8cacf968c5472c6",
+      "size": 913
+    },
+    {
+      "path": "functions/assert/Common/Get-AssertionGotcha.ps1",
+      "sha256": "c73919295d031bc90fb365a8656e116883d635b9bd7459f8636127ef452ce3d3",
+      "size": 11454
+    },
+    {
+      "path": "functions/assert/Common/Get-AssertionMessage.ps1",
+      "sha256": "891ebc920e2e7f7baa0162926b367e2e2e0a53cba340cf775381e16aec1c4574",
+      "size": 3371
+    },
+    {
+      "path": "functions/assert/Common/Get-CustomFailureMessage.ps1",
+      "sha256": "5fabb9c54f9cfaa146603feb54017e23290b8cac75891edd68c7e89a8af74c01",
+      "size": 301
+    },
+    {
+      "path": "functions/assert/Common/Invoke-AssertionFailed.ps1",
+      "sha256": "ce7a3f4c4f95a7bfe5fc13b69ff241d0775a2de21badd07fafa0ff4ff887e8b0",
+      "size": 2381
+    },
+    {
+      "path": "functions/assert/Common/Is-CollectionSubsequence.ps1",
+      "sha256": "f486229e6e8f31b5d0beb6a29637d282e06cd50adece02d492d3841bd6783588",
+      "size": 1938
+    },
+    {
+      "path": "functions/assert/Common/Is-CollectionSubset.ps1",
+      "sha256": "0ad573d9ea722dac84396c5d97c417f819f371388a9f9edfe10b964d3531da3f",
+      "size": 2449
+    },
+    {
+      "path": "functions/assert/Common/New-ShouldAssertion.ps1",
+      "sha256": "93317a601160daab3b85e44edf6848f2cbb2b0510c7a406348fc8fcc253ccb5b",
+      "size": 15993
+    },
+    {
+      "path": "functions/assert/Common/Set-AssertionPassResult.ps1",
+      "sha256": "d24fb2323ee21a356c61df9568598cd3d591b15044d13bcf11cf00558e0965f2",
+      "size": 112
+    },
+    {
+      "path": "functions/assert/Equivalence/Should-BeEquivalent.ps1",
+      "sha256": "56188f0d43c440c986d9956b0eb84d408d0de13ad221a3198deb2cb6d2365b8b",
+      "size": 38485
+    },
+    {
+      "path": "functions/assert/Exception/Should-Throw.ps1",
+      "sha256": "b11438eab62775aa813b057977aa1bc1360aa92f85a112e0cf3762ffac857967",
+      "size": 8618
+    },
+    {
+      "path": "functions/assert/General/Should-Be.ps1",
+      "sha256": "7b821df3543d0469be9e2d1f42c90f9ec553423c7bbd13b5fc00b9bd8a06a3d4",
+      "size": 2034
+    },
+    {
+      "path": "functions/assert/General/Should-BeGreaterThan.ps1",
+      "sha256": "d8e5270444e74e40b977b733b35a8ff1ea4db0a75b55a866e6d8d2cd0d8e208b",
+      "size": 2798
+    },
+    {
+      "path": "functions/assert/General/Should-BeGreaterThanOrEqual.ps1",
+      "sha256": "967e7ca93021dd316fc7f0e3a24dbc16ebf8de6ea14c2dab8d093ed2f6c62c61",
+      "size": 2860
+    },
+    {
+      "path": "functions/assert/General/Should-BeLessThan.ps1",
+      "sha256": "9bddd530faae5636116019a9bc2ef796d1b7de2c55a8a0f84b4641cdc18675ad",
+      "size": 2774
+    },
+    {
+      "path": "functions/assert/General/Should-BeLessThanOrEqual.ps1",
+      "sha256": "fda9e058c19030dcc9f44a262d5c66ba97e3d64da28f87533cf151df143b8383",
+      "size": 3126
+    },
+    {
+      "path": "functions/assert/General/Should-BeNull.ps1",
+      "sha256": "1e146dc2bb81b5b2b22868e20a1c2bb284f9320201f5138e443a6ea1f9d13e57",
+      "size": 1724
+    },
+    {
+      "path": "functions/assert/General/Should-BeSame.ps1",
+      "sha256": "649d24cd3785effbe735ff5754834c5f179d2297dfb88323f3150d4d370f7e8d",
+      "size": 2961
+    },
+    {
+      "path": "functions/assert/General/Should-HaveType.ps1",
+      "sha256": "99d8c34b3b65f7b3be361268f13156ea5f73b1ab24f538d52884273ff6ce89f2",
+      "size": 3653
+    },
+    {
+      "path": "functions/assert/General/Should-NotBe.ps1",
+      "sha256": "4b0c9d6314059074f93ab43aac79a14435fff9de70673eca9e759c52f359a84c",
+      "size": 2125
+    },
+    {
+      "path": "functions/assert/General/Should-NotBeNull.ps1",
+      "sha256": "be0ae3a0c2f55404eba5ed065ba24e551f59281c684567fa9c85b2301ddad4ea",
+      "size": 1757
+    },
+    {
+      "path": "functions/assert/General/Should-NotBeSame.ps1",
+      "sha256": "aae5a327e8f8105e258ba3ce7d589bde0f15cb394e5a2e28bcedf343453d28e6",
+      "size": 2592
+    },
+    {
+      "path": "functions/assert/General/Should-NotHaveType.ps1",
+      "sha256": "e89ce0c25a0f00fadc70c604de0a6fdb4352506ec5da473d74e536b2d852a228",
+      "size": 3371
+    },
+    {
+      "path": "functions/assert/Hashtable/Should-BeHashtable.ps1",
+      "sha256": "c52b20d7a28e5e271d14f86bd3689528421a359ed971ce25975bf1718bd73941",
+      "size": 6771
+    },
+    {
+      "path": "functions/assert/Mock/Should-Invoke.ps1",
+      "sha256": "92874f35b6ab5e39b96b9fa6067cb15330e6b578d8138f32a9290015b806e8eb",
+      "size": 8515
+    },
+    {
+      "path": "functions/assert/Mock/Should-NotInvoke.ps1",
+      "sha256": "41ed7d6cf5b396a85f2a14056ab22ea743da83cad3e318a7ba4a4e55ef108930",
+      "size": 7211
+    },
+    {
+      "path": "functions/assert/Parameter/Should-HaveParameter.ps1",
+      "sha256": "2f5f161c04c087773bd493f344cf0dc56e42625482cbbdc1031a91c79803d57e",
+      "size": 4362
+    },
+    {
+      "path": "functions/assert/Parameter/Should-NotHaveParameter.ps1",
+      "sha256": "ec62470ce40dc9fa398882e4cea0fd5e3ef8c6fcc493aa517bf244e236a2ce4a",
+      "size": 2563
+    },
+    {
+      "path": "functions/assert/String/Should-BeEmptyString.ps1",
+      "sha256": "9ce051831c2f12c484d4b186e412b1002da58dd5400eaacaea2e1c9fc2331c8a",
+      "size": 2272
+    },
+    {
+      "path": "functions/assert/String/Should-BeLikeString.ps1",
+      "sha256": "763a8f93980122a86a79dbbbc9861c01c0ebdf67618bdeca792a7f8270eaf403",
+      "size": 3302
+    },
+    {
+      "path": "functions/assert/String/Should-BeString.ps1",
+      "sha256": "bb0ece7c4a13e044621e995671a304d812330c8b2205417712acdf4788cbe7e9",
+      "size": 8433
+    },
+    {
+      "path": "functions/assert/String/Should-MatchString.ps1",
+      "sha256": "26bbcd0151cb3aa977e08131dd54baea8fef96d15ffb7b0b2d91215936217119",
+      "size": 3889
+    },
+    {
+      "path": "functions/assert/String/Should-NotBeEmptyString.ps1",
+      "sha256": "f6ecf36a87789f576d90d40861890f034b40e16ba01755a101496075d3e1f50a",
+      "size": 2354
+    },
+    {
+      "path": "functions/assert/String/Should-NotBeLikeString.ps1",
+      "sha256": "89d46c2c22d375bb9054314198f2ee02edc2c826a193208ca62dd587ae66706e",
+      "size": 3842
+    },
+    {
+      "path": "functions/assert/String/Should-NotBeString.ps1",
+      "sha256": "a0113bb7ce014ead0caa2a859649988df2d84a2b53ef7ad7ea053efc96516230",
+      "size": 4044
+    },
+    {
+      "path": "functions/assert/String/Should-NotBeWhiteSpaceString.ps1",
+      "sha256": "64d444b4541086406724383c44448373de072a89eb40a440a86d6f8f78fdeccf",
+      "size": 2492
+    },
+    {
+      "path": "functions/assert/String/Should-NotMatchString.ps1",
+      "sha256": "09d9fda36113fd8add03fecd71b95666863177c00154546e95a709005275da7d",
+      "size": 3845
+    },
+    {
+      "path": "functions/assert/Time/Get-TimeSpanFromStringWithUnit.ps1",
+      "sha256": "c73bf5a2c15154426ac89229fb41facad76f8a481e02861793a501ffb95318eb",
+      "size": 966
+    },
+    {
+      "path": "functions/assert/Time/Should-BeAfter.ps1",
+      "sha256": "607404b12c61de52eba05058cdc06b8d6452857963c4a09673613e299b8d045f",
+      "size": 4907
+    },
+    {
+      "path": "functions/assert/Time/Should-BeBefore.ps1",
+      "sha256": "9a0dbffad439165e2f5528b58cc434540d4823d209db94e0d5fa69d01cb5ccaa",
+      "size": 4922
+    },
+    {
+      "path": "functions/assert/Time/Should-BeFasterThan.ps1",
+      "sha256": "700fc95af5f6b422d75c2bd8472707b721234f35f99bfd2d57dcd3d68896cb0d",
+      "size": 3794
+    },
+    {
+      "path": "functions/assert/Time/Should-BeSlowerThan.ps1",
+      "sha256": "5cf0a131e904db67aeb9d0afa96d71bab59ca66a17d0815c7ebe5b3f5cf25b23",
+      "size": 3956
+    },
+    {
+      "path": "functions/assertions/Be.ps1",
+      "sha256": "c066026bf5242368e3de0487c4f19538116759e359e800f2ea9389a4f29f1f12",
+      "size": 19338
+    },
+    {
+      "path": "functions/assertions/BeGreaterThan.ps1",
+      "sha256": "8312aa2457e6329fc09117e59e80cde1a1269b62e3d89a1149b16a5ab2c7c592",
+      "size": 3341
+    },
+    {
+      "path": "functions/assertions/BeIn.ps1",
+      "sha256": "897b3ea6fc4fe7428f0807b1aede946ccdeda35f8d66ea74b45f0192ef3c7b0e",
+      "size": 2029
+    },
+    {
+      "path": "functions/assertions/BeLessThan.ps1",
+      "sha256": "79394bf3791a7f2ffb477086c46629995b88d4c3f3164086288e6450ae6d46f6",
+      "size": 3338
+    },
+    {
+      "path": "functions/assertions/BeLike.ps1",
+      "sha256": "f3ebd5bfee2136fe9b8e55415e6e48e78020effb5cdafa8409fdd49aa89e50ff",
+      "size": 2322
+    },
+    {
+      "path": "functions/assertions/BeLikeExactly.ps1",
+      "sha256": "43dbae72f4bfce6c9091f783fddce83b1f6b72dead39e0960267cf83acc3b890",
+      "size": 2336
+    },
+    {
+      "path": "functions/assertions/BeNullOrEmpty.ps1",
+      "sha256": "76995e284bb918d8aacc4f85525c998b90af98bc672c42e55f1c243417c3044a",
+      "size": 2755
+    },
+    {
+      "path": "functions/assertions/BeOfType.ps1",
+      "sha256": "cd99de8e584a5f7c41bc5cc4ac2ef337240234196a2f8de940dfa0b9f8f0f90f",
+      "size": 6635
+    },
+    {
+      "path": "functions/assertions/BeTrueOrFalse.ps1",
+      "sha256": "9d3f41d52ebf6c50adde62a5bc2be8760b38bd41055466dd050458feafb6e1f0",
+      "size": 2967
+    },
+    {
+      "path": "functions/assertions/Contain.ps1",
+      "sha256": "e0e44fc5932183734a472a5978a11e69975f8d4e21ad8a629dab50fe4e51669e",
+      "size": 2029
+    },
+    {
+      "path": "functions/assertions/Exist.ps1",
+      "sha256": "a8ea1b6ae9797d19669476df4676d3d450605e35c8c3cc1da79ab5849f442be3",
+      "size": 2111
+    },
+    {
+      "path": "functions/assertions/FileContentMatch.ps1",
+      "sha256": "9b16485db9fe4df6b4d19d894c26589d2f453fbeb3c6ffb173b23fb9910ff36e",
+      "size": 3270
+    },
+    {
+      "path": "functions/assertions/FileContentMatchExactly.ps1",
+      "sha256": "f51580f5eaf52327c93d415bdc118841bf79936b17144a52f693949a2d8bc81e",
+      "size": 2790
+    },
+    {
+      "path": "functions/assertions/FileContentMatchMultiline.ps1",
+      "sha256": "fddca3806beed84c7719aeb5a43598e62be91613204c4d8852fc8dcfe6d4ec6f",
+      "size": 3609
+    },
+    {
+      "path": "functions/assertions/FileContentMatchMultilineExactly.ps1",
+      "sha256": "471bfceffe67bc4062f1ecb90f198bb4aeaeab5d45e2a0da4435b67e17571eab",
+      "size": 4718
+    },
+    {
+      "path": "functions/assertions/HaveCount.ps1",
+      "sha256": "64ddf3df74fbec2ab19b97633ff9e423a035ce61932b535eee6d449773d1167c",
+      "size": 3354
+    },
+    {
+      "path": "functions/assertions/HaveParameter.ps1",
+      "sha256": "4572167d1e55011c14650ab6f8283788be57495bc00660b578d2609107905e04",
+      "size": 17833
+    },
+    {
+      "path": "functions/assertions/Match.ps1",
+      "sha256": "6bb95565ff35f3b228e63288b5a2ec632d7dd3a58474e8e966b1784fa724bb6e",
+      "size": 2715
+    },
+    {
+      "path": "functions/assertions/MatchExactly.ps1",
+      "sha256": "52ee4b85cc7b24431b7b6f01b709e1d3253c71924fa60ee90ec5cf76e6ef8bc2",
+      "size": 2426
+    },
+    {
+      "path": "functions/assertions/PesterThrow.ps1",
+      "sha256": "8feefbef5c8a8313f0c7dcad2aa75c1d736b04afc8584dd31e1b23682df87616",
+      "size": 7483
+    },
+    {
+      "path": "functions/assertions/Should.ps1",
+      "sha256": "3ea8142c688d5bd611d4beb6cc9f97ca980148b3f6e27b0b6f01a58e4e57526e",
+      "size": 12202
+    }
+  ],
+  "extensions": [
+    ".ps1",
+    ".psd1",
+    ".psm1"
+  ],
+  "label_policy": "Operator asserts benign status; inventory does not establish trustworthiness."
+}
