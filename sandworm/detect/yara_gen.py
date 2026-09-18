@@ -1,15 +1,17 @@
 """Generate YARA rules from static + behavioral evidence — clean-tested.
 
-Every generated rule is auto-tested against a bundled clean corpus; any rule that
-matches a benign document is DROPPED (it would false-positive). We keep a tiny
-internal rule representation so the clean test runs offline without the `yara`
-binary, and also serialize to real YARA text for operators.
+Every generated rule is tested against bundled clean fixtures; matching rules
+are tightened or dropped. YARA-X validates the serialized rules when installed;
+a restricted internal matcher supports dependency-light installations. Passing
+these fixtures does not establish a population false-positive rate. Use the
+separate hash-pinned goodware audit to measure actual-engine matches.
 """
 
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 
 from ..core.evidence import EvidenceStore
@@ -34,6 +36,16 @@ _STOPWORDS = {
 }
 
 
+@lru_cache(maxsize=128)
+def _compile_yara_x(source: str):
+    import yara_x
+
+    compiler = yara_x.Compiler()
+    compiler.enable_includes(False)
+    compiler.add_source(source)
+    return compiler.build()
+
+
 @dataclass
 class YaraRule:
     name: str
@@ -42,20 +54,35 @@ class YaraRule:
     meta: dict = field(default_factory=dict)
 
     def matches(self, data: bytes) -> bool:
+        # Use the real serialized-rule engine when the evaluation extra exists.
+        # Compilation errors are not silently hidden by the fallback matcher.
+        try:
+            compiled = _compile_yara_x(self.to_yara())
+        except ImportError:
+            compiled = None
+        if compiled is not None:
+            return bool(compiled.scan(data).matching_rules)
         # Anchors sourced from wide (UTF-16LE) strings must hit the sample's
         # actual encoding, so each string matches in either representation —
         # mirroring the `ascii wide` modifier in the serialized rule.
         hits = sum(
             1
             for s in self.strings
-            if s and (s in data or s.decode("latin-1").encode("utf-16-le") in data)
+            if s and (s in data or (s.isascii() and s.decode("ascii").isprintable() and s.decode("ascii").encode("utf-16-le") in data))
         )
         return hits >= self.condition_min
 
     def to_yara(self) -> str:
-        lines = [f"rule {self.name}", "{", "    meta:"]
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", self.name):
+            raise ValueError("invalid YARA rule identifier")
+        lines = [f"rule {self.name}", "{"]
+        if self.meta:
+            lines.append("    meta:")
         for k, v in self.meta.items():
-            lines.append(f'        {k} = "{str(v)[:120]}"')
+            if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", k):
+                raise ValueError("invalid YARA metadata identifier")
+            escaped = str(v)[:120].replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t")
+            lines.append(f'        {k} = "{escaped}"')
         lines.append("    strings:")
         for i, s in enumerate(self.strings):
             try:
@@ -204,7 +231,8 @@ def load_clean_corpus(directory: str | Path | None = None) -> list[bytes]:
         if not f.is_file() or f.name.startswith(".") or f.name.lower() in {"readme.md", "readme"}:
             continue
         try:
-            corpus.append(f.read_bytes()[:_MAX_CORPUS_FILE_BYTES])
+            with f.open("rb") as stream:
+                corpus.append(stream.read(_MAX_CORPUS_FILE_BYTES))
         except OSError:
             continue
         if len(corpus) >= _MAX_CORPUS_FILES:

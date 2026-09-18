@@ -526,9 +526,11 @@ def _render_from_store(run_id: str, store: EvidenceStore, out_path: Path) -> Non
     write_report(inp, out_path)
 
 
+from .evaluation.commands import register_commands as register_evaluation  # noqa: E402
 from .platform.commands import register_commands  # noqa: E402
 
 register_commands(app)
+register_evaluation(app)
 
 if __name__ == "__main__":
     app()

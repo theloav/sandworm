@@ -5,6 +5,12 @@ and research work. “Implemented” does not mean every malware family, file va
 or deployment has been validated. Sandworm is an analysis aid, not an independent
 proof of containment or a replacement for analyst review.
 
+Measurement and hardening additions: a hash-pinned ATT&CK regression harness,
+Brier/ECE/reliability reports, real-engine YARA-X goodware audits, constrained
+copilot evidence selection, detection review bundles with optional Sigma KQL/SPL
+conversion, an indexed SQLite corpus snapshot, and optional Aho–Corasick ransom
+matching. See [measurement methods and remaining proposals](measurement.md).
+
 ## Shipped platform
 
 | Area | Implemented | Validation / boundary |

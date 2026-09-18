@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 480" role="img" aria-label="Reliability diagram">
+<rect width="500" height="480" fill="white"/>
+<path d="M60 40 V400 H460 M60 400 L420 40" fill="none" stroke="#888"/>
+<text x="150" y="450">Mean reported confidence</text>
+<text x="65" y="22">Observed correctness (95% Wilson intervals)</text>
+<text x="45" y="420">0</text><text x="415" y="420">1</text><text x="35" y="45">1</text>
+<path d="M274.20 40.00 V325.64" stroke="#1260aa"/>
+<circle cx="274.20" cy="40.00" r="5" fill="#1260aa"><title>n=1</title></circle>
+<path d="M330.90 40.00 V276.74" stroke="#1260aa"/>
+<circle cx="330.90" cy="40.00" r="5" fill="#1260aa"><title>n=2</title></circle>
+<path d="M359.76 40.00 V242.14" stroke="#1260aa"/>
+<circle cx="359.76" cy="40.00" r="5" fill="#1260aa"><title>n=3</title></circle>
+</svg>

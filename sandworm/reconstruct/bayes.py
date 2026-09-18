@@ -15,6 +15,12 @@ wants fall out for free:
 
 The prior is a single documented base rate (no corpus is assumed offline); it is
 reported alongside the posterior so the update is auditable, not a magic number.
+
+These are heuristic log-odds scores, NOT empirically calibrated probabilities.
+The prior, weights, and dependence discounts have not been fitted on an independent
+labeled malware corpus. Use ``sandworm benchmark`` to measure calibration on an
+explicitly labeled population; synthetic regression scores cannot validate a
+deployment-wide interpretation of 0.9 as 90% correctness.
 """
 
 from __future__ import annotations

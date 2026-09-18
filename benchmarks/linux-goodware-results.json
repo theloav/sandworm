@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "engine": "yara-x",
+  "engine_version": "1.20.0",
+  "rules_sha256": "cf5eab555cc3213d28b2b4ff0d525776ed8fbb69235b67d6f9798536b0615533",
+  "manifest_sha256": "934bddfd36834f93217ff888c9eed5650caad398dea0eb8c72f7038a0488a662",
+  "provenance": "Local Ubuntu /usr/bin regular files, 2026-09-18; presumed benign installed utilities, not independently certified; symlinks excluded and SHA256 duplicates removed",
+  "files_total": 1267,
+  "files_scanned": 1267,
+  "matching_files": 0,
+  "observed_fp_rate": 0.0,
+  "wilson95": [
+    2.168404344971009e-19,
+    0.0030227679416902978
+  ],
+  "complete": true,
+  "per_rule_matching_files": {
+    "SANDWORM_77e23fc54a15": 0,
+    "SANDWORM_43af2e95eba1": 0
+  },
+  "matches": [],
+  "errors": [],
+  "scope": "Conditional on operator benign labels and this corpus/rule set only; errors are not counted as clean files. Not a population FP guarantee."
+}

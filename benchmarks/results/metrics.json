@@ -1,0 +1,372 @@
+{
+  "schema_version": 1,
+  "sandworm_version": "0.2.0",
+  "corpus": "reviewed-script-regression-v1",
+  "corpus_kind": "synthetic-regression-not-independent-malware-benchmark",
+  "manifest_sha256": "066da0dce299328ebc6a1b1958776aedde0110f66ee2a45fbea9389e16b1db02",
+  "threshold": 0.5,
+  "micro": {
+    "tp": 6,
+    "fp": 0,
+    "fn": 4,
+    "tn": 54,
+    "precision": 1.0,
+    "recall": 0.6,
+    "f1": 0.75
+  },
+  "per_technique": {
+    "T1057": {
+      "tp": 0,
+      "fp": 0,
+      "fn": 1,
+      "tn": 7,
+      "precision": null,
+      "recall": 0.0,
+      "f1": 0.0
+    },
+    "T1059": {
+      "tp": 3,
+      "fp": 0,
+      "fn": 0,
+      "tn": 5,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0
+    },
+    "T1059.001": {
+      "tp": 1,
+      "fp": 0,
+      "fn": 1,
+      "tn": 6,
+      "precision": 1.0,
+      "recall": 0.5,
+      "f1": 0.6666666666666666
+    },
+    "T1059.004": {
+      "tp": 0,
+      "fp": 0,
+      "fn": 1,
+      "tn": 7,
+      "precision": null,
+      "recall": 0.0,
+      "f1": 0.0
+    },
+    "T1059.007": {
+      "tp": 0,
+      "fp": 0,
+      "fn": 1,
+      "tn": 7,
+      "precision": null,
+      "recall": 0.0,
+      "f1": 0.0
+    },
+    "T1105": {
+      "tp": 1,
+      "fp": 0,
+      "fn": 0,
+      "tn": 7,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0
+    },
+    "T1486": {
+      "tp": 0,
+      "fp": 0,
+      "fn": 0,
+      "tn": 8,
+      "precision": null,
+      "recall": null,
+      "f1": null
+    },
+    "T1505.003": {
+      "tp": 1,
+      "fp": 0,
+      "fn": 0,
+      "tn": 7,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0
+    }
+  },
+  "calibration_emitted": {
+    "n": 6,
+    "brier": 0.061977333333333336,
+    "ece": 0.2336666666666666,
+    "bins": [
+      {
+        "lower": 0.0,
+        "upper": 0.1,
+        "count": 0,
+        "mean_confidence": null,
+        "accuracy": null,
+        "accuracy_wilson95": null
+      },
+      {
+        "lower": 0.1,
+        "upper": 0.2,
+        "count": 0,
+        "mean_confidence": null,
+        "accuracy": null,
+        "accuracy_wilson95": null
+      },
+      {
+        "lower": 0.2,
+        "upper": 0.3,
+        "count": 0,
+        "mean_confidence": null,
+        "accuracy": null,
+        "accuracy_wilson95": null
+      },
+      {
+        "lower": 0.3,
+        "upper": 0.4,
+        "count": 0,
+        "mean_confidence": null,
+        "accuracy": null,
+        "accuracy_wilson95": null
+      },
+      {
+        "lower": 0.4,
+        "upper": 0.5,
+        "count": 0,
+        "mean_confidence": null,
+        "accuracy": null,
+        "accuracy_wilson95": null
+      },
+      {
+        "lower": 0.5,
+        "upper": 0.6,
+        "count": 1,
+        "mean_confidence": 0.595,
+        "accuracy": 1.0,
+        "accuracy_wilson95": [
+          0.20654931437723745,
+          1.0
+        ]
+      },
+      {
+        "lower": 0.6,
+        "upper": 0.7,
+        "count": 0,
+        "mean_confidence": null,
+        "accuracy": null,
+        "accuracy_wilson95": null
+      },
+      {
+        "lower": 0.7,
+        "upper": 0.8,
+        "count": 2,
+        "mean_confidence": 0.7525,
+        "accuracy": 1.0,
+        "accuracy_wilson95": [
+          0.34238022750665303,
+          1.0
+        ]
+      },
+      {
+        "lower": 0.8,
+        "upper": 0.9,
+        "count": 3,
+        "mean_confidence": 0.8326666666666668,
+        "accuracy": 1.0,
+        "accuracy_wilson95": [
+          0.4385029682449546,
+          1.0
+        ]
+      },
+      {
+        "lower": 0.9,
+        "upper": 1.0,
+        "count": 0,
+        "mean_confidence": null,
+        "accuracy": null,
+        "accuracy_wilson95": null
+      }
+    ]
+  },
+  "calibration_decisions": {
+    "n": 64,
+    "brier": 0.068310375,
+    "ece": 0.08440625,
+    "bins": [
+      {
+        "lower": 0.0,
+        "upper": 0.1,
+        "count": 58,
+        "mean_confidence": 0.0,
+        "accuracy": 0.06896551724137931,
+        "accuracy_wilson95": [
+          0.027144247017578338,
+          0.1643366631438035
+        ]
+      },
+      {
+        "lower": 0.1,
+        "upper": 0.2,
+        "count": 0,
+        "mean_confidence": null,
+        "accuracy": null,
+        "accuracy_wilson95": null
+      },
+      {
+        "lower": 0.2,
+        "upper": 0.3,
+        "count": 0,
+        "mean_confidence": null,
+        "accuracy": null,
+        "accuracy_wilson95": null
+      },
+      {
+        "lower": 0.3,
+        "upper": 0.4,
+        "count": 0,
+        "mean_confidence": null,
+        "accuracy": null,
+        "accuracy_wilson95": null
+      },
+      {
+        "lower": 0.4,
+        "upper": 0.5,
+        "count": 0,
+        "mean_confidence": null,
+        "accuracy": null,
+        "accuracy_wilson95": null
+      },
+      {
+        "lower": 0.5,
+        "upper": 0.6,
+        "count": 1,
+        "mean_confidence": 0.595,
+        "accuracy": 1.0,
+        "accuracy_wilson95": [
+          0.20654931437723745,
+          1.0
+        ]
+      },
+      {
+        "lower": 0.6,
+        "upper": 0.7,
+        "count": 0,
+        "mean_confidence": null,
+        "accuracy": null,
+        "accuracy_wilson95": null
+      },
+      {
+        "lower": 0.7,
+        "upper": 0.8,
+        "count": 2,
+        "mean_confidence": 0.7525,
+        "accuracy": 1.0,
+        "accuracy_wilson95": [
+          0.34238022750665303,
+          1.0
+        ]
+      },
+      {
+        "lower": 0.8,
+        "upper": 0.9,
+        "count": 3,
+        "mean_confidence": 0.8326666666666668,
+        "accuracy": 1.0,
+        "accuracy_wilson95": [
+          0.4385029682449546,
+          1.0
+        ]
+      },
+      {
+        "lower": 0.9,
+        "upper": 1.0,
+        "count": 0,
+        "mean_confidence": null,
+        "accuracy": null,
+        "accuracy_wilson95": null
+      }
+    ]
+  },
+  "calibration_note": "Emitted: judged claims only. Decisions: all judged pairs, absent mappings scored 0 (not a Bayesian posterior). Neither implies deployment calibration.",
+  "cases": [
+    {
+      "id": "hello.php",
+      "sha256": "c93e4c529adec2470598bddba9ba5e6ea5749b9495bf4c1e0bc315871bc249bf",
+      "scores": {},
+      "false_positives": [],
+      "false_negatives": [],
+      "unjudged_predictions": []
+    },
+    {
+      "id": "command.php",
+      "sha256": "47c2166a9487b669dfcfb522d824a19e4748a3d0c0a761bd160d2024ccdc7459",
+      "scores": {
+        "T1059": 0.855,
+        "T1505.003": 0.765
+      },
+      "false_positives": [],
+      "false_negatives": [],
+      "unjudged_predictions": []
+    },
+    {
+      "id": "comment.php",
+      "sha256": "1accf621be2aa0a6197d611f98929023ffd04d8f29749c667f7a8766a09a1645",
+      "scores": {},
+      "false_positives": [],
+      "false_negatives": [],
+      "unjudged_predictions": []
+    },
+    {
+      "id": "download.ps1",
+      "sha256": "77e23fc54a15be50d9c6d038014dabc094dcac7391a34a8a71a82da1493ff689",
+      "scores": {
+        "T1059": 0.833,
+        "T1059.001": 0.74,
+        "T1071": 0.844,
+        "T1105": 0.595
+      },
+      "false_positives": [],
+      "false_negatives": [],
+      "unjudged_predictions": [
+        "T1071"
+      ]
+    },
+    {
+      "id": "inventory.ps1",
+      "sha256": "291835a4baeb3e59c3fb7d3bbf96ec30d740e1ab37a7b3668ce2ca58e1ad1115",
+      "scores": {},
+      "false_positives": [],
+      "false_negatives": [
+        "T1057",
+        "T1059.001"
+      ],
+      "unjudged_predictions": []
+    },
+    {
+      "id": "hello.js",
+      "sha256": "6252d5857c1132624bf376c907a2047679ed15a1ba17819d44a6f8f76dda0cfc",
+      "scores": {},
+      "false_positives": [],
+      "false_negatives": [],
+      "unjudged_predictions": []
+    },
+    {
+      "id": "eval.js",
+      "sha256": "bb3e1cd74ea9f7e561cac8b86cdaf81381c6482478c54313578555ca1ace9b0b",
+      "scores": {
+        "T1059": 0.81
+      },
+      "false_positives": [],
+      "false_negatives": [
+        "T1059.007"
+      ],
+      "unjudged_predictions": []
+    },
+    {
+      "id": "backup.sh",
+      "sha256": "d95045d86e00fdf59c40fb46fc8b175fc818b37ebf686bdfcfbb411546a29fd8",
+      "scores": {},
+      "false_positives": [],
+      "false_negatives": [
+        "T1059.004"
+      ],
+      "unjudged_predictions": []
+    }
+  ]
+}

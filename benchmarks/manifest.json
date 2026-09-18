@@ -1,0 +1,149 @@
+{
+  "schema_version": 1,
+  "name": "reviewed-script-regression-v1",
+  "kind": "synthetic-regression-not-independent-malware-benchmark",
+  "annotation_scope": "Static capability presence in a bounded technique universe; not runtime proof or maliciousness. Unlisted techniques are unjudged. Labels authored before running this benchmark; not extracted from mapper outputs.",
+  "cases": [
+    {
+      "id": "hello.php",
+      "path": "fixtures/hello.php",
+      "sha256": "c93e4c529adec2470598bddba9ba5e6ea5749b9495bf4c1e0bc315871bc249bf",
+      "positive": [],
+      "negative": [
+        "T1059",
+        "T1059.001",
+        "T1059.004",
+        "T1059.007",
+        "T1057",
+        "T1105",
+        "T1505.003",
+        "T1486"
+      ],
+      "rationale": "Only literal output; no interpreter sink or transfer."
+    },
+    {
+      "id": "command.php",
+      "path": "fixtures/command.php",
+      "sha256": "47c2166a9487b669dfcfb522d824a19e4748a3d0c0a761bd160d2024ccdc7459",
+      "positive": [
+        "T1059",
+        "T1505.003"
+      ],
+      "negative": [
+        "T1059.001",
+        "T1059.004",
+        "T1059.007",
+        "T1057",
+        "T1105",
+        "T1486"
+      ],
+      "rationale": "User-controlled PHP command sink: command interpreter capability and web shell."
+    },
+    {
+      "id": "comment.php",
+      "path": "fixtures/comment.php",
+      "sha256": "1accf621be2aa0a6197d611f98929023ffd04d8f29749c667f7a8766a09a1645",
+      "positive": [],
+      "negative": [
+        "T1059",
+        "T1059.001",
+        "T1059.004",
+        "T1059.007",
+        "T1057",
+        "T1105",
+        "T1505.003",
+        "T1486"
+      ],
+      "rationale": "Sink names appear only in a comment and literal; no calls."
+    },
+    {
+      "id": "download.ps1",
+      "path": "fixtures/download.ps1",
+      "sha256": "77e23fc54a15be50d9c6d038014dabc094dcac7391a34a8a71a82da1493ff689",
+      "positive": [
+        "T1059",
+        "T1059.001",
+        "T1105"
+      ],
+      "negative": [
+        "T1059.004",
+        "T1059.007",
+        "T1057",
+        "T1505.003",
+        "T1486"
+      ],
+      "rationale": "PowerShell downloads and evaluates script text; labels describe static capabilities, not observed execution."
+    },
+    {
+      "id": "inventory.ps1",
+      "path": "fixtures/inventory.ps1",
+      "sha256": "291835a4baeb3e59c3fb7d3bbf96ec30d740e1ab37a7b3668ce2ca58e1ad1115",
+      "positive": [
+        "T1057",
+        "T1059.001"
+      ],
+      "negative": [
+        "T1059",
+        "T1059.004",
+        "T1059.007",
+        "T1105",
+        "T1505.003",
+        "T1486"
+      ],
+      "rationale": "PowerShell Get-Process enumerates processes; shell-language label applies even to benign code."
+    },
+    {
+      "id": "hello.js",
+      "path": "fixtures/hello.js",
+      "sha256": "6252d5857c1132624bf376c907a2047679ed15a1ba17819d44a6f8f76dda0cfc",
+      "positive": [],
+      "negative": [
+        "T1059",
+        "T1059.001",
+        "T1059.004",
+        "T1059.007",
+        "T1057",
+        "T1105",
+        "T1505.003",
+        "T1486"
+      ],
+      "rationale": "Arithmetic and console output; no code-evaluation sink."
+    },
+    {
+      "id": "eval.js",
+      "path": "fixtures/eval.js",
+      "sha256": "bb3e1cd74ea9f7e561cac8b86cdaf81381c6482478c54313578555ca1ace9b0b",
+      "positive": [
+        "T1059",
+        "T1059.007"
+      ],
+      "negative": [
+        "T1059.001",
+        "T1059.004",
+        "T1057",
+        "T1105",
+        "T1505.003",
+        "T1486"
+      ],
+      "rationale": "JavaScript evaluates a literal expression; technique presence is not a maliciousness label."
+    },
+    {
+      "id": "backup.sh",
+      "path": "fixtures/backup.sh",
+      "sha256": "d95045d86e00fdf59c40fb46fc8b175fc818b37ebf686bdfcfbb411546a29fd8",
+      "positive": [
+        "T1059.004"
+      ],
+      "negative": [
+        "T1059",
+        "T1059.001",
+        "T1059.007",
+        "T1057",
+        "T1105",
+        "T1505.003",
+        "T1486"
+      ],
+      "rationale": "Shell script prints a literal; Unix shell capability is present without malicious behavior."
+    }
+  ]
+}

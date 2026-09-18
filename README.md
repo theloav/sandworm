@@ -32,6 +32,23 @@ sandworm worker
 [Platform guide](docs/platform.md) · [Sandbox deployment](docs/sandbox-deployment.md)
 · [Advanced analysis](docs/advanced-analysis.md) · `sandworm doctor`
 
+### Measurement baseline
+
+The fixed eight-script regression corpus currently scores **precision 1.00,
+recall 0.60** (6 TP, 0 FP, 4 FN). Emitted-claim Brier score is **0.06198 on only
+six judged claims**—not evidence of real-world calibration. Two frozen generated
+YARA rules matched **0/1,267** hash-pinned, presumed-benign local Ubuntu utility
+files (observed FP rate 0%; descriptive 95% Wilson upper bound 0.3023%). This does
+not establish Windows/script-corpus performance or a zero-FP guarantee.
+
+[Raw results and reliability diagram](benchmarks/results/summary.md) ·
+[Methods, corpus limits, copilot trust boundary and detection bundles](docs/measurement.md)
+
+New commands: `benchmark`, `yara-audit`, `detection-bundle`, `index-corpus`,
+`query-corpus`, and `benchmark-matchers`. Optional extras: `evaluation`,
+`detections`, and `matching`. Grounded copilot answers now render validated
+evidence selections; unrestricted model prose is not labeled grounded.
+
 SANDWORM is an isolated, multi-format malware reverse-engineering platform. It is
 *not* "another sandbox": every subsystem exists to serve one promise — take a
 sample, reconstruct its lifecycle from **static, dynamic, and memory** evidence,

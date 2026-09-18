@@ -8,6 +8,8 @@ only phrases the grounded facts.
 
 from __future__ import annotations
 
+import json
+import re
 from typing import Any, Protocol
 
 from .config import Config, get_config
@@ -32,6 +34,8 @@ class MockProvider:
         ctx = ""
         if "<CONTEXT>" in prompt and "</CONTEXT>" in prompt:
             ctx = prompt.split("<CONTEXT>", 1)[1].split("</CONTEXT>", 1)[0].strip()
+        if "evidence_ids" in system:
+            return json.dumps({"evidence_ids": list(dict.fromkeys(re.findall(r"^\[(ev_[a-f0-9]{16})\]", ctx, re.M)))[:12]})
         question = ""
         if "<QUESTION>" in prompt and "</QUESTION>" in prompt:
             question = prompt.split("<QUESTION>", 1)[1].split("</QUESTION>", 1)[0].strip()

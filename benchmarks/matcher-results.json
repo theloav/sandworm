@@ -1,0 +1,29 @@
+{
+  "python": "3.12.3",
+  "platform": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+  "bytes": 8388705,
+  "data_sha256": "35fdaaa2cb03b0d4d82bbae4d7c50a3ed3f04ea2a451501850b51365e3f1903c",
+  "repeats": 5,
+  "seconds": {
+    "regex": [
+      0.1781130449999182,
+      0.1773286139996344,
+      0.17741530599960242,
+      0.17948562700075854,
+      0.17807358400023077
+    ],
+    "aho": [
+      0.11324738700022863,
+      0.10983345600106986,
+      0.11365422800008673,
+      0.11666342399985297,
+      0.11350025600040681
+    ]
+  },
+  "median_seconds": {
+    "regex": 0.17807358400023077,
+    "aho": 0.11350025600040681
+  },
+  "regex_over_aho": 1.5689267167784406,
+  "scope": "Synthetic fixed-seed ransomware literal sweep only; not whole-pipeline throughput or peak RSS."
+}

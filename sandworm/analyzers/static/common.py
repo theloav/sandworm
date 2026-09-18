@@ -8,7 +8,9 @@ URL in a config file is not the same signal as a URL in a decoded payload.
 from __future__ import annotations
 
 import math
+import os
 import re
+from functools import lru_cache
 
 from ...core.evidence import EvidenceItem
 from ...core.sample import Sample
@@ -306,22 +308,43 @@ _RANSOM_ASCII_RE = re.compile(b"|".join(re.escape(n) for n in _ORDERED_NEEDLES))
 _RANSOM_WIDE_RE = re.compile(b"|".join(re.escape(n.decode().encode("utf-16-le")) for n in _ORDERED_NEEDLES))
 
 
-def ransomware_scan(data: bytes) -> tuple[list[str], dict[str, list[str]]]:
+@lru_cache(maxsize=1)
+def _ransom_automata():
+    import ahocorasick
+
+    automatons = []
+    for encoding in ("ascii", "utf-16-le"):
+        automaton = ahocorasick.Automaton()
+        for needle in _ORDERED_NEEDLES:
+            automaton.add_word(needle.decode().encode(encoding).decode("latin-1"), needle.decode())
+        automaton.make_automaton()
+        automatons.append(automaton)
+    return automatons
+
+
+def ransomware_scan(data: bytes, *, engine: str | None = None) -> tuple[list[str], dict[str, list[str]]]:
     """Return (recovery_inhibit_hits, {category: [hits]}) — the recovery hits feed
     T1490 and also count as a ransomware category. Needles are matched in both
     ASCII and UTF-16LE in a single pass each."""
+    engine = engine or os.environ.get("SANDWORM_LITERAL_ENGINE", "regex")
     low = data.lower()
     found: dict[str, set[str]] = {}
-    for regex, decode in ((_RANSOM_ASCII_RE, "latin-1"), (_RANSOM_WIDE_RE, "utf-16-le")):
-        for m in regex.finditer(low):
-            needle = m.group().decode(decode, "replace")
-            cat = _NEEDLE_CATEGORY.get(needle.encode())
-            if cat:
-                found.setdefault(cat, set()).add(needle)
+    if engine == "aho":
+        text = low.decode("latin-1")
+        for automaton in _ransom_automata():
+            for _, needle in automaton.iter_long(text):
+                found.setdefault(_NEEDLE_CATEGORY[needle.encode()], set()).add(needle)
+    elif engine == "regex":
+        for regex, decode in ((_RANSOM_ASCII_RE, "latin-1"), (_RANSOM_WIDE_RE, "utf-16-le")):
+            for m in regex.finditer(low):
+                needle = m.group().decode(decode, "replace")
+                cat = _NEEDLE_CATEGORY.get(needle.encode())
+                if cat:
+                    found.setdefault(cat, set()).add(needle)
+    else:
+        raise ValueError("engine must be regex or aho")
     recovery = sorted(found.get("recovery_inhibit", set()))
     cats: dict[str, list[str]] = {c: sorted(v) for c, v in found.items() if c != "recovery_inhibit"}
-    if recovery:
-        cats["recovery_inhibit"] = recovery
     if recovery:
         cats["recovery_inhibit"] = recovery
     return recovery, cats
